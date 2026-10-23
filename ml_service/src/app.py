@@ -17,10 +17,8 @@ if st.button("Check") and text.strip():
 
     if r["outcome"] == "allow":
         st.success("ALLOW")
-    elif r["outcome"] == "hold":
-        st.warning("HOLD for moderator review")
     else:
-        st.error("REJECT")
+        st.warning("HOLD for moderator review")
 
     col1, col2 = st.columns(2)
     col1.metric("Spam score", r["spam_score"])
