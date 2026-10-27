@@ -1,16 +1,17 @@
 const express = require("express");
 const app = express();
 
-// 1. Parse incoming JSON requests FIRST
 app.use(express.json());
 
-// 2. Import routes
+//import routes
 const communityRoutes = require("./routes/communityRoutes");
 const authRoutes = require("./routes/authRoutes");
+const channelRoutes = require("./routes/channelRoutes");
 
-// 3. Register routes AFTER express.json()
+
 app.use("/api/communities", communityRoutes);
 app.use("/api/auth", authRoutes);
+app.use("/api/channels", channelRoutes);
 
 app.get("/", (req, res) => {
 res.status(200).json({
