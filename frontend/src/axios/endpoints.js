@@ -1,10 +1,9 @@
+const endpoints = {
+  REGISTER: '/api/auth/register',
+  LOGIN: '/api/auth/login',
+  LOGOUT: '/api/auth/logout',
+  VERIFY_OTP: '/api/auth/verify-otp',
+  RESEND_OTP: '/api/auth/resend-otp',
+};
 
-
-const endpoints={
-
-    REGISTER:"/register",
-    LOGIN:"/login"
-
-}
-
-export default endpoints
+export default endpoints;

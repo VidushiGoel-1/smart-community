@@ -5,18 +5,105 @@ import topLogo from "../assets/yappy-logo.png";
 import vectorUpper from "../assets/Vector.png";
 import vectorLower from "../assets/Vector (1).png";
 import whiteWave from "../assets/White wave.png";
+import authService from "../services/authService";
 
 const LoginPage = (props) => {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(props.initialEmail || '');
+  const [prevInitialEmail, setPrevInitialEmail] = useState(props.initialEmail);
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+  const [errors, setErrors] = useState({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
-  const handleSubmit = (e) => {
+  // Sync initialEmail if forwarded from signup or OTP verification
+  if (props.initialEmail && props.initialEmail !== prevInitialEmail) {
+    setPrevInitialEmail(props.initialEmail);
+    setEmail(props.initialEmail);
+  }
+
+  const validate = () => {
+    const newErrors = {};
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!email.trim()) {
+      newErrors.email = "Please enter your email address";
+    } else if (!emailRegex.test(email.trim())) {
+      newErrors.email = "Please enter a valid email address";
+    }
+
+    if (!password) {
+      newErrors.password = "Please enter your password";
+    } else if (password.length < 6) {
+      newErrors.password = "Password must be at least 6 characters";
+    }
+
+    return newErrors;
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log("Login Data Submitted: ", { email, password, rememberMe });
-    if (props.onFormSwitch) {
-      props.onFormSwitch('dashboard');
+    if (isSubmitting || cooldownSeconds > 0) return;
+
+    const validationErrors = validate();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
+      return;
+    }
+
+    setErrors({});
+    setIsSubmitting(true);
+
+    try {
+      const data = await authService.login({
+        email: email.trim(),
+        password,
+      });
+
+      // Strict token validation - only navigate on valid response
+      if (data?.accessToken) {
+        if (props.onFormSwitch) {
+          props.onFormSwitch('dashboard');
+        }
+      } else {
+        setErrors({
+          general: data?.message || "Login succeeded but no access token was returned by the server."
+        });
+      }
+    } catch (err) {
+      const message =
+        err.friendlyMessage ||
+        err.response?.data?.message ||
+        err.message ||
+        "Login failed. Please verify your credentials.";
+
+      const isNetworkError = Boolean(err.isNetworkOrCors || err.code === 'ERR_NETWORK' || !err.response);
+      const isUnverified =
+        message.toLowerCase().includes('verify') ||
+        message.toLowerCase().includes('otp');
+
+      setErrors({
+        general: isNetworkError ? 'Network Error' : message,
+        isUnverified,
+        isNetworkOrCors: isNetworkError,
+      });
+
+      // If connection or CORS failed, impose a 3-second cooldown to prevent request flooding
+      if (err.isNetworkOrCors) {
+        setCooldownSeconds(3);
+        const timer = setInterval(() => {
+          setCooldownSeconds((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -30,6 +117,12 @@ const LoginPage = (props) => {
       <div
         className="top-logo"
         onClick={() => props.onFormSwitch && props.onFormSwitch('dashboard')}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            props.onFormSwitch && props.onFormSwitch('dashboard');
+          }
+        }}
         role="button"
         tabIndex={0}
         aria-label="Go to Dashboard"
@@ -47,7 +140,22 @@ const LoginPage = (props) => {
           </p>
         </div>
 
-        <form className="login-form" onSubmit={handleSubmit}>
+        {errors.general && (
+          <div className="form-error-banner" role="alert">
+            <span>{errors.general}</span>
+            {errors.isUnverified && (
+              <button
+                type="button"
+                className="btn-verify-now"
+                onClick={() => props.onFormSwitch('verifyOtp', { email: email.trim() })}
+              >
+                Verify with OTP &rarr;
+              </button>
+            )}
+          </div>
+        )}
+
+        <form className="login-form" onSubmit={handleSubmit} noValidate>
           <div className="input-group">
             <label htmlFor="login-email">Email Address</label>
             <div className="input-wrapper">
@@ -56,11 +164,17 @@ const LoginPage = (props) => {
                 type="email"
                 placeholder="Enter your email address"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (errors.email) setErrors((prev) => ({ ...prev, email: '' }));
+                }}
+                className={errors.email ? 'input-error' : ''}
                 required
                 autoComplete="email"
+                disabled={isSubmitting}
               />
             </div>
+            {errors.email && <span className="field-error">{errors.email}</span>}
           </div>
 
           <div className="input-group">
@@ -71,15 +185,21 @@ const LoginPage = (props) => {
                 type={showPassword ? "text" : "password"}
                 placeholder="Enter your password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (errors.password) setErrors((prev) => ({ ...prev, password: '' }));
+                }}
+                className={errors.password ? 'input-error' : ''}
                 required
                 autoComplete="current-password"
+                disabled={isSubmitting}
               />
               <button
                 type="button"
                 className="password-toggle-btn"
                 onClick={() => setShowPassword(!showPassword)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
               >
                 {showPassword ? (
                   <svg className="eye-icon" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="#777B85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -94,17 +214,19 @@ const LoginPage = (props) => {
                 )}
               </button>
             </div>
+            {errors.password && <span className="field-error">{errors.password}</span>}
           </div>
 
           <div className="form-options">
-            <span
-              className="remember-me"
-              onClick={() => setRememberMe(!rememberMe)}
-              role="button"
-              tabIndex={0}
-            >
-              Remember me
-            </span>
+            <label className="remember-me-label">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                disabled={isSubmitting}
+              />
+              <span>Remember me</span>
+            </label>
             <a
               href="#"
               className="forgot-password"
@@ -117,8 +239,16 @@ const LoginPage = (props) => {
             </a>
           </div>
 
-          <button type="submit" className="btn-primary">
-            Log In &rarr;
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={isSubmitting || cooldownSeconds > 0}
+          >
+            {isSubmitting
+              ? "Logging in..."
+              : cooldownSeconds > 0
+              ? `Please wait (${cooldownSeconds}s)...`
+              : "Log In \u2192"}
           </button>
         </form>
 
@@ -164,7 +294,7 @@ const LoginPage = (props) => {
       </div>
 
       {/* Waves Section */}
-      {/* <div className="waves-container">
+      <div className="waves-container">
         <svg
           className="waves-svg"
           viewBox="0 0 1440 445"
@@ -176,9 +306,9 @@ const LoginPage = (props) => {
           <image href={vectorLower} x="0" y="112" width="1440" height="270" />
           <image href={whiteWave} x="0" y="215" width="1440" height="230" />
         </svg>
-      </div> */}
+      </div>
     </div>
   );
 };
 
-export default LoginPage;  
+export default LoginPage;

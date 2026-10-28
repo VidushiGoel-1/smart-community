@@ -5,7 +5,7 @@ import topLogo from "../assets/yappy-logo.png";
 import vectorUpper from "../assets/Vector.png";
 import vectorLower from "../assets/Vector (1).png";
 import whiteWave from "../assets/White wave.png";
-
+import authService from "../services/authService";
 
 const SignupPage = (props) => {
   const [fullName, setFullName] = useState('');
@@ -16,12 +16,15 @@ const SignupPage = (props) => {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
 
   const validate = () => {
     const newErrors = {};
 
     if (!fullName.trim()) {
       newErrors.fullName = "Full name is required";
+    } else if (fullName.trim().length < 2) {
+      newErrors.fullName = "Full name must be at least 2 characters";
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -48,7 +51,7 @@ const SignupPage = (props) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (isSubmitting) return; // Prevent duplicate submissions
+    if (isSubmitting || cooldownSeconds > 0) return;
 
     const validationErrors = validate();
     if (Object.keys(validationErrors).length > 0) {
@@ -60,16 +63,50 @@ const SignupPage = (props) => {
     setIsSubmitting(true);
 
     try {
-      console.log("Signup Data Submitted: ", { fullName, email, password });
+      const response = await authService.register({
+        name: fullName.trim(),
+        email: email.trim(),
+        password,
+      });
 
-      alert("Account created successfully! Please verify your email before logging in.");
-
+      // Backend returns 201 with instruction to verify OTP
       if (props.onFormSwitch) {
-        props.onFormSwitch('login');
+        props.onFormSwitch('verifyOtp', {
+          email: email.trim(),
+          notice: response?.message || 'Registration successful. Please verify your email using the OTP.',
+        });
       }
     } catch (err) {
-      console.error("Signup error: ", err);
-      setErrors({ general: "An error occurred during registration. Please try again." });
+      const errorMessage =
+        err.friendlyMessage ||
+        err.response?.data?.message ||
+        err.message ||
+        "An error occurred during registration. Please try again.";
+
+      const isNetworkError = Boolean(err.isNetworkOrCors || err.code === 'ERR_NETWORK' || !err.response);
+      const isConflict =
+        err.response?.status === 409 ||
+        errorMessage.toLowerCase().includes('already');
+
+      setErrors({
+        general: isNetworkError ? 'Network Error' : errorMessage,
+        isConflict,
+        isNetworkOrCors: isNetworkError,
+      });
+
+      // If connection or CORS failed, impose a 3-second cooldown to prevent request flooding
+      if (err.isNetworkOrCors) {
+        setCooldownSeconds(3);
+        const timer = setInterval(() => {
+          setCooldownSeconds((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -85,6 +122,12 @@ const SignupPage = (props) => {
       <div
         className="top-logo"
         onClick={() => props.onFormSwitch && props.onFormSwitch('dashboard')}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            props.onFormSwitch && props.onFormSwitch('dashboard');
+          }
+        }}
         role="button"
         tabIndex={0}
         aria-label="Go to Dashboard"
@@ -96,12 +139,21 @@ const SignupPage = (props) => {
       <div className="signup-card">
         <div className="header-section">
           <h1>Create Your Account</h1>
-          <p>Join Yappy and be a part of something bigger</p>
+          <p>Join Smart Community and be a part of something bigger</p>
         </div>
 
         {errors.general && (
           <div className="form-error-banner" role="alert">
-            {errors.general}
+            <span>{errors.general}</span>
+            {errors.isConflict && (
+              <button
+                type="button"
+                className="btn-action-hint"
+                onClick={() => props.onFormSwitch('login', { email: email.trim() })}
+              >
+                Go to Log in &rarr;
+              </button>
+            )}
           </div>
         )}
 
@@ -117,10 +169,11 @@ const SignupPage = (props) => {
                 value={fullName}
                 onChange={(e) => {
                   setFullName(e.target.value);
-                  if (errors.fullName) setErrors(prev => ({ ...prev, fullName: '' }));
+                  if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: '' }));
                 }}
                 className={errors.fullName ? 'input-error' : ''}
                 autoComplete="name"
+                disabled={isSubmitting}
               />
             </div>
             {errors.fullName && <span className="field-error">{errors.fullName}</span>}
@@ -137,10 +190,11 @@ const SignupPage = (props) => {
                 value={email}
                 onChange={(e) => {
                   setEmail(e.target.value);
-                  if (errors.email) setErrors(prev => ({ ...prev, email: '' }));
+                  if (errors.email) setErrors((prev) => ({ ...prev, email: '' }));
                 }}
                 className={errors.email ? 'input-error' : ''}
                 autoComplete="email"
+                disabled={isSubmitting}
               />
             </div>
             {errors.email && <span className="field-error">{errors.email}</span>}
@@ -157,16 +211,18 @@ const SignupPage = (props) => {
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
-                  if (errors.password) setErrors(prev => ({ ...prev, password: '' }));
+                  if (errors.password) setErrors((prev) => ({ ...prev, password: '' }));
                 }}
                 className={errors.password ? 'input-error' : ''}
                 autoComplete="new-password"
+                disabled={isSubmitting}
               />
               <button
                 type="button"
                 className="password-toggle-btn"
                 onClick={() => setShowPassword(!showPassword)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
+                aria-pressed={showPassword}
               >
                 {showPassword ? (
                   <svg className="eye-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#777B85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -195,16 +251,18 @@ const SignupPage = (props) => {
                 value={confirmPassword}
                 onChange={(e) => {
                   setConfirmPassword(e.target.value);
-                  if (errors.confirmPassword) setErrors(prev => ({ ...prev, confirmPassword: '' }));
+                  if (errors.confirmPassword) setErrors((prev) => ({ ...prev, confirmPassword: '' }));
                 }}
                 className={errors.confirmPassword ? 'input-error' : ''}
                 autoComplete="new-password"
+                disabled={isSubmitting}
               />
               <button
                 type="button"
                 className="password-toggle-btn"
                 onClick={() => setShowConfirmPassword(!showConfirmPassword)}
                 aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                aria-pressed={showConfirmPassword}
               >
                 {showConfirmPassword ? (
                   <svg className="eye-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#777B85" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -222,8 +280,16 @@ const SignupPage = (props) => {
             {errors.confirmPassword && <span className="field-error">{errors.confirmPassword}</span>}
           </div>
 
-          <button type="submit" className="btn-primary" disabled={isSubmitting}>
-            {isSubmitting ? "Creating Account..." : "Create Account \u2192"}
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={isSubmitting || cooldownSeconds > 0}
+          >
+            {isSubmitting
+              ? "Creating Account..."
+              : cooldownSeconds > 0
+              ? `Please wait (${cooldownSeconds}s)...`
+              : "Create Account \u2192"}
           </button>
         </form>
 
@@ -269,7 +335,7 @@ const SignupPage = (props) => {
       </div>
 
       {/* Layered grey and white waves */}
-      {/* <div className="waves-container">
+      <div className="waves-container">
         <svg
           className="waves-svg"
           viewBox="0 0 1440 445"
@@ -281,7 +347,7 @@ const SignupPage = (props) => {
           <image href={vectorLower} x="0" y="112" width="1440" height="270" />
           <image href={whiteWave} x="0" y="215" width="1440" height="230" />
         </svg>
-      </div> */}
+      </div>
     </div>
   );
 };

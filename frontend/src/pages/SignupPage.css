@@ -4,23 +4,6 @@
   box-sizing: border-box;
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-  width: 100%;
-  min-height: 100%;
-  background-color: #101010;
-  -webkit-text-size-adjust: 100%;
-}
-
-#root {
-  width: 100%;
-  min-height: 100%;
-  margin: 0;
-  padding: 0;
-}
-
 /* Page wrapper */
 .signup-wrapper {
   min-height: 100vh;
@@ -39,19 +22,12 @@ body {
 
 /* Desktop */
 @media (min-width: 1024px) and (min-height: 720px) {
-
-  html,
-  body,
-  #root,
   .signup-wrapper {
-    height: 100vh;
-    overflow: hidden;
-  }
-
-  .signup-wrapper {
+    min-height: 100vh;
     padding: 0 1rem;
   }
 }
+
 
 /* Brand logo */
 .top-logo {
@@ -137,6 +113,27 @@ body {
   border-radius: 4px;
   margin-bottom: 0.85rem;
   text-align: left;
+}
+
+.btn-action-hint {
+  display: inline-block;
+  margin-top: 0.35rem;
+  background: none;
+  border: none;
+  color: #9F1239;
+  font-weight: 700;
+  font-size: 0.78rem;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.cors-hint {
+  display: block;
+  font-size: 0.72rem;
+  color: #881337;
+  font-style: italic;
+  margin-top: 0.25rem;
 }
 
 /* Form */
@@ -365,6 +362,17 @@ body {
   display: block;
   pointer-events: none;
   user-select: none;
+}
+
+.mascot-peeking-signin {
+  position: absolute;
+  bottom: 85px;
+  left: 5%;
+  width: 72px;
+  height: auto;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
 }
 
 /* --- Responsive Adjustments for Tablets & Mobiles --- */
