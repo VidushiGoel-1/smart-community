@@ -74,13 +74,15 @@ const app = express();
 
 // CORS configuration
 const corsOptions = {
-    origin: "https://smart-community-zeta.vercel.app/",
+    origin: [
+        "http://localhost:5173",
+        "https://smart-community-zeta.vercel.app",
+    ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
 };
 
-// Apply CORS middleware BEFORE registering routes
 app.use(cors(corsOptions));
 
 // Parse JSON request bodies
