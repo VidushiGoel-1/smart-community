@@ -6,8 +6,6 @@ MODELS = Path(__file__).resolve().parent.parent / "models"
 _tox = joblib.load(MODELS / "toxicity_model.joblib")
 _spam = joblib.load(MODELS / "spam_model.joblib")
 
-REJECT_AT = 0.90   # a label score this high -> reject (our starting rule)
-
 def predict(text):
     # 1. toxicity: one score per label
     t = clean_text(text)
@@ -22,13 +20,8 @@ def predict(text):
     spam_score = float(_spam["model"].predict_proba([clean_spam(text)])[0, 1])
     is_spam = spam_score >= _spam["threshold"]
 
-    # 3. turn scores into a decision
-    if max(scores.values()) >= REJECT_AT:
-        outcome = "reject"
-    elif flagged or is_spam:
-        outcome = "hold"
-    else:
-        outcome = "allow"
+    # 3. decision: the model never rejects, a human moderator decides
+    outcome = "hold" if (flagged or is_spam) else "allow"
 
     return {"outcome": outcome, "flagged_labels": flagged, "toxicity_scores": scores,
             "spam_score": round(spam_score, 3), "is_spam": bool(is_spam)}
