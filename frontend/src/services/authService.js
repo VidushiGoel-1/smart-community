@@ -127,6 +127,30 @@ const authService = {
       return false;
     }
   },
+
+  /**
+   * Extract authenticated user ID from JWT access token payload
+   */
+  getCurrentUserId: () => {
+    try {
+      const token = authService.getAccessToken();
+      if (!token) return null;
+      const parts = token.split('.');
+      if (parts.length < 2) return null;
+      // Decode URL-safe base64 payload
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join('')
+      );
+      const parsed = JSON.parse(jsonPayload);
+      return parsed.sub || parsed.id || null;
+    } catch {
+      return null;
+    }
+  },
 };
 
 export default authService;

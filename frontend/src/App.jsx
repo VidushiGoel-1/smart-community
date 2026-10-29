@@ -66,26 +66,6 @@ function App() {
       {currentForm === 'dashboard' && (
         <Dashboard onFormSwitch={toggleForm} />
       )}
-
-      {/* Persistent view switcher for testing */}
-      <button
-        style={{
-          position: 'fixed',
-          bottom: 20,
-          right: 20,
-          zIndex: 1000,
-          padding: '10px 15px',
-          backgroundColor: '#B794F6',
-          color: '#101010',
-          fontWeight: 600,
-          border: '1px solid #FAF8F3',
-          borderRadius: '8px',
-          cursor: 'pointer',
-          boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
-        }}
-        onClick={() => toggleForm(currentForm === "dashboard" ? "login" : "dashboard")}>
-        Go to {currentForm === "dashboard" ? 'Login' : 'Dashboard'}
-      </button>
     </>
   );
 }

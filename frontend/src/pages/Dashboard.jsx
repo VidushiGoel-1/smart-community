@@ -1,6 +1,9 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import './Dashboard.css';
 import topLogo from '../assets/yappy-logo.png';
+import authService from '../services/authService';
+import communityService from '../services/communityService';
+import channelService from '../services/channelService';
 import {
   initialCurrentUser,
   initialCommunities,
@@ -11,6 +14,134 @@ import {
   initialAuditLogs,
   initialNotifications
 } from '../services/mockData';
+
+let idCounter = 1000;
+const generateId = (prefix = 'id') => `${prefix}_${++idCounter}_${Math.random().toString(36).slice(2, 7)}`;
+
+const SERVER_TEMPLATES = [
+  {
+    key: 'Gaming',
+    icon: '🎮',
+    title: 'Gaming',
+    desc: 'For clips, gameplay, gaming sessions, and hanging out with your squad',
+    category: 'Gaming',
+    defaultAvatar: '🎮'
+  },
+  {
+    key: 'Friends',
+    icon: '👥',
+    title: 'Friends',
+    desc: 'For close friend groups, inside jokes, and daily casual chatter',
+    category: 'General',
+    defaultAvatar: '👥'
+  },
+  {
+    key: 'Study Group',
+    icon: '📚',
+    title: 'Study Group',
+    desc: 'For homework help, study sessions, and notes sharing',
+    category: 'Education',
+    defaultAvatar: '📚'
+  },
+  {
+    key: 'School Club',
+    icon: '🏫',
+    title: 'School Club',
+    desc: 'For student clubs, campus organizations, and events',
+    category: 'Education',
+    defaultAvatar: '🏫'
+  }
+];
+
+const AVATAR_PRESETS = [
+  { emoji: '🎮', label: 'Gaming', bg: '#EDE9FE', border: '#C4B5FD' },
+  { emoji: '💻', label: 'Tech', bg: '#E0E7FF', border: '#A5B4FC' },
+  { emoji: '👥', label: 'Friends', bg: '#D1FAE5', border: '#6EE7B7' },
+  { emoji: '📚', label: 'Study', bg: '#FEF3C7', border: '#FCD34D' },
+  { emoji: '🏫', label: 'School', bg: '#FEE2E2', border: '#FCA5A5' },
+  { emoji: '🎨', label: 'Art', bg: '#FCE7F3', border: '#F9A8D4' },
+  { emoji: '🚀', label: 'Launch', bg: '#E2E8F0', border: '#CBD5E1' },
+  { emoji: '💬', label: 'Chat', bg: '#EDE9FE', border: '#C4B5FD' },
+  { emoji: '✨', label: 'Magic', bg: '#FEF3C7', border: '#FCD34D' },
+  { emoji: '🎵', label: 'Music', bg: '#FEE2E2', border: '#FCA5A5' },
+  { emoji: '🛡️', label: 'Security', bg: '#D1FAE5', border: '#6EE7B7' },
+  { emoji: '☕', label: 'Lounge', bg: '#FFEDD5', border: '#FDBA74' },
+];
+
+// Helper: Map backend community response to dashboard structure
+const mapBackendCommunity = (comm, currentUserId) => {
+  const isOwner = Boolean(currentUserId && String(comm.owner) === String(currentUserId));
+  const isMember = Boolean(comm.isMember || isOwner);
+
+  const category = comm.category || 'General';
+  let icon = '👥';
+  let iconBg = '#F0E7FF';
+  let iconColor = '#8A2BE2';
+
+  if (category === 'Development') {
+    icon = '</>';
+    iconBg = '#F0E7FF';
+    iconColor = '#8A2BE2';
+  } else if (category === 'Design') {
+    icon = '🎨';
+    iconBg = '#FAF8F3';
+    iconColor = '#FF8FA3';
+  } else if (category === 'AI/ML') {
+    icon = '🧠';
+    iconBg = '#FAF8F3';
+    iconColor = '#FF8FA3';
+  } else if (category === 'Gaming') {
+    icon = '🎮';
+    iconBg = '#EDE9FE';
+    iconColor = '#8B5CF6';
+  } else if (category === 'Education') {
+    icon = '📚';
+    iconBg = '#FEF3C7';
+    iconColor = '#D97706';
+  } else if (category === 'Tech') {
+    icon = '💻';
+    iconBg = '#E0E7FF';
+    iconColor = '#4F46E5';
+  }
+
+  return {
+    id: comm._id,
+    _id: comm._id,
+    name: comm.name,
+    slug: comm.name.toLowerCase().replace(/\s+/g, '-'),
+    icon: comm.icon || icon,
+    iconBg: comm.iconBg || iconBg,
+    iconColor: comm.iconColor || iconColor,
+    category,
+    description: comm.description || '',
+    membersCount: comm.memberCount || 1,
+    userRole: isOwner ? 'Owner' : (isMember ? 'Member' : 'Viewer'),
+    isJoined: isMember,
+    owner: comm.owner,
+    channels: comm.channels || [],
+    members: comm.members || [
+      ...(isOwner ? [{ id: currentUserId, role: 'Owner', name: 'Owner', status: 'Online' }] : [])
+    ],
+    createdAt: comm.createdAt,
+  };
+};
+
+// Helper: Map backend channel response to dashboard structure
+const mapBackendChannel = (ch) => {
+  return {
+    id: ch._id,
+    _id: ch._id,
+    name: ch.name,
+    topic: ch.description || 'Welcome to the channel!',
+    description: ch.description || '',
+    type: ch.type || 'text',
+    isAnnouncement: ch.type === 'announcement',
+    isPrivate: false,
+    community: ch.community,
+    createdBy: ch.createdBy,
+    createdAt: ch.createdAt,
+  };
+};
 
 const Dashboard = ({ onFormSwitch }) => {
   // Navigation & View State
@@ -58,8 +189,28 @@ const Dashboard = ({ onFormSwitch }) => {
     }
   };
 
-  // App Data State
-  const [currentUser, setCurrentUser] = useState(initialCurrentUser);
+  // App Data State (Synced with local auth if user previously logged in)
+  const [currentUser, setCurrentUser] = useState(() => {
+    const saved = authService.getUser();
+    const tokenUid = authService.getCurrentUserId();
+    if (saved && (saved.name || saved.email)) {
+      const email = saved.email || initialCurrentUser.email;
+      const name = saved.name || email.split('@')[0];
+      const initials = name.slice(0, 2).toUpperCase();
+      return {
+        ...initialCurrentUser,
+        id: tokenUid || saved.id || 'usr_101',
+        name,
+        email,
+        username: email.split('@')[0],
+        avatarText: initials,
+      };
+    }
+    return {
+      ...initialCurrentUser,
+      id: tokenUid || initialCurrentUser.id,
+    };
+  });
   const [communities, setCommunities] = useState(initialCommunities);
   const [discoverList, setDiscoverList] = useState(initialDiscoverCommunities);
   const [channelMessages, setChannelMessages] = useState(initialChannelMessages);
@@ -68,11 +219,141 @@ const Dashboard = ({ onFormSwitch }) => {
   const [auditLogs, setAuditLogs] = useState(initialAuditLogs);
   const [notifications, setNotifications] = useState(initialNotifications);
 
+  // Communities Backend Integration State
+  const [communitiesLoading, setCommunitiesLoading] = useState(false);
+  const [communitiesError, setCommunitiesError] = useState(null);
+  const [isCreatingCommunity, setIsCreatingCommunity] = useState(false);
+  const [createCommunityError, setCreateCommunityError] = useState(null);
+  const [joiningCommunityId, setJoiningCommunityId] = useState(null);
+
+  // Channels Backend Integration State
+  const [channelsLoading, setChannelsLoading] = useState(false);
+  const [channelsError, setChannelsError] = useState(null);
+  const [isCreatingChannel, setIsCreatingChannel] = useState(false);
+  const [createChannelError, setCreateChannelError] = useState(null);
+  const [isEditChannelModalOpen, setIsEditChannelModalOpen] = useState(false);
+  const [editingChannel, setEditingChannel] = useState(null);
+  const [editChannelForm, setEditChannelForm] = useState({ name: '', topic: '', type: 'text' });
+  const [isUpdatingChannel, setIsUpdatingChannel] = useState(false);
+  const [updateChannelError, setUpdateChannelError] = useState(null);
+  const [isDeleteChannelModalOpen, setIsDeleteChannelModalOpen] = useState(false);
+  const [deletingChannel, setDeletingChannel] = useState(null);
+  const [isDeletingChannel, setIsDeletingChannel] = useState(false);
+  const [deleteChannelError, setDeleteChannelError] = useState(null);
+
   // Active Contexts
   const [activeCommunity, setActiveCommunity] = useState(initialCommunities[0]);
   const [activeChannelId, setActiveChannelId] = useState(initialCommunities[0]?.channels[0]?.id || '');
   const [activeDmId, setActiveDmId] = useState(initialDirectMessages[0]?.id || '');
   const [showMembersPanel, setShowMembersPanel] = useState(true);
+
+  // Fetch Communities from Backend
+  const fetchCommunities = useCallback(async () => {
+    setCommunitiesLoading(true);
+    setCommunitiesError(null);
+    try {
+      const data = await communityService.getCommunities();
+      if (data?.success && Array.isArray(data.communities)) {
+        const currentUid = authService.getCurrentUserId() || currentUser.id;
+        const mapped = data.communities.map((c) => mapBackendCommunity(c, currentUid));
+        const joined = mapped.filter((c) => c.isJoined);
+
+        setCommunities(joined);
+        setDiscoverList(mapped);
+
+        setActiveCommunity((prev) => {
+          if (!prev || !prev._id) {
+            return joined[0] || mapped[0] || null;
+          }
+          const exists = mapped.find((c) => c.id === prev.id || c._id === prev._id);
+          return exists || prev;
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to load communities from backend, retaining fallback state:', err);
+      setCommunitiesError(
+        err.friendlyMessage || err.response?.data?.message || 'Could not load communities from backend.'
+      );
+    } finally {
+      setCommunitiesLoading(false);
+    }
+  }, [currentUser.id]);
+
+  useEffect(() => {
+    let isCancelled = false;
+    Promise.resolve().then(async () => {
+      if (isCancelled) return;
+      await fetchCommunities();
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [fetchCommunities]);
+
+  // Fetch Channels for active community from Backend
+  const fetchChannelsForCommunity = useCallback(async (communityId) => {
+    if (!communityId) return;
+    setChannelsLoading(true);
+    setChannelsError(null);
+    try {
+      const data = await channelService.getChannels(communityId);
+      if (data?.success && Array.isArray(data.channels)) {
+        const mappedChannels = data.channels.map(mapBackendChannel);
+        setActiveCommunity((prev) => (prev ? { ...prev, channels: mappedChannels } : prev));
+        setCommunities((prev) =>
+          prev.map((c) => (c.id === communityId || c._id === communityId ? { ...c, channels: mappedChannels } : c))
+        );
+        if (mappedChannels.length > 0) {
+          setActiveChannelId((prevId) => {
+            const exists = mappedChannels.some((ch) => ch.id === prevId);
+            return exists ? prevId : mappedChannels[0].id;
+          });
+        } else {
+          setActiveChannelId('');
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to load channels for community:', err);
+      setChannelsError(err.friendlyMessage || err.response?.data?.message || 'Failed to load channels');
+    } finally {
+      setChannelsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activeCommunity) return;
+    const commId = activeCommunity._id || activeCommunity.id;
+    const isBackendComm = Boolean(activeCommunity._id || /^[0-9a-fA-F]{24}$/.test(commId));
+    if (isBackendComm && activeCommunity.isJoined) {
+      let isCancelled = false;
+      Promise.resolve().then(async () => {
+        if (isCancelled) return;
+        await fetchChannelsForCommunity(commId);
+      });
+      return () => {
+        isCancelled = true;
+      };
+    }
+  }, [activeCommunity, fetchChannelsForCommunity]);
+
+  // Direct Messages Workspace State (Simplified & PDF-Compliant)
+  const [dmSearchQuery, setDmSearchQuery] = useState('');
+  const [dmMessageSearchQuery, setDmMessageSearchQuery] = useState('');
+  const [dmReplyingTo, setDmReplyingTo] = useState(null);
+  const [dmAttachedFile, setDmAttachedFile] = useState(null);
+  const [editingDmMessageId, setEditingDmMessageId] = useState(null);
+  const [editingDmContent, setEditingDmContent] = useState('');
+  const [mobileDmView, setMobileDmView] = useState('chat'); // 'list' | 'chat' for mobile/tablet
+  const [isNewDmModalOpen, setIsNewDmModalOpen] = useState(false);
+  const [newDmType, setNewDmType] = useState('direct'); // 'direct' | 'group'
+  const [newDmRecipient, setNewDmRecipient] = useState('');
+  const [newDmGroupName, setNewDmGroupName] = useState('');
+  const [newDmGroupMembers, setNewDmGroupMembers] = useState('');
+  const [newDmError, setNewDmError] = useState('');
+
+  // Moderator Hub Filter & Search State
+  const [modFilterTab, setModFilterTab] = useState('all'); // 'all' | 'high' | 'medium' | 'spam' | 'harassment'
+  const [modSearchQuery, setModSearchQuery] = useState('');
 
   // Chat Input & Interaction State
   const [chatInputText, setChatInputText] = useState('');
@@ -88,6 +369,29 @@ const Dashboard = ({ onFormSwitch }) => {
 
   // Modals & Feedback
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [createServerStep, setCreateServerStep] = useState(1); // 1 = templates, 2 = customize
+  const [selectedServerTemplate, setSelectedServerTemplate] = useState('General');
+  const [selectedServerAvatar, setSelectedServerAvatar] = useState('🎮');
+
+  const [isCreateChannelModalOpen, setIsCreateChannelModalOpen] = useState(false);
+  const [newChannelForm, setNewChannelForm] = useState({
+    name: '',
+    topic: '',
+    isPrivate: false
+  });
+
+  const [isGuidelinesModalOpen, setIsGuidelinesModalOpen] = useState(false);
+  const [isEditingGuidelines, setIsEditingGuidelines] = useState(false);
+  const [communityGuidelines, setCommunityGuidelines] = useState(
+    '1. Be respectful and constructive with all members.\n' +
+    '2. Keep messages relevant to the specific channel topic.\n' +
+    '3. Zero tolerance for harassment, hate speech, or abusive behavior.\n' +
+    '4. Do not spam, post unsolicited promotions, or share malicious links.\n' +
+    '5. Respect community moderation policies and administrator guidance.'
+  );
+
+  const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false);
+
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [joinCodeInput, setJoinCodeInput] = useState('');
   const [newCommunityForm, setNewCommunityForm] = useState({
@@ -122,83 +426,417 @@ const Dashboard = ({ onFormSwitch }) => {
     setActiveCommunity(community);
     if (community.channels && community.channels.length > 0) {
       setActiveChannelId(community.channels[0].id);
+    } else {
+      setActiveChannelId('');
     }
     setActiveTab('community-view');
     setReplyingToMessage(null);
     setAttachedFile(null);
+    const commId = community._id || community.id;
+    if (community._id || /^[0-9a-fA-F]{24}$/.test(commId)) {
+      fetchChannelsForCommunity(commId);
+    }
   };
 
   // Helper: Join a discoverable community
-  const handleJoinCommunity = (communityToJoin) => {
-    const isAlreadyJoined = communities.some(c => c.id === communityToJoin.id);
+  const handleJoinCommunity = async (communityToJoin) => {
+    const commId = communityToJoin._id || communityToJoin.id;
+    const isAlreadyJoined = communities.some(
+      (c) => c.id === commId || c._id === commId || (c.isJoined && c.id === communityToJoin.id)
+    );
     if (isAlreadyJoined) {
       triggerToast(`You are already a member of ${communityToJoin.name}!`);
       return;
     }
 
-    const updatedCommunity = {
-      ...communityToJoin,
-      userRole: 'Member',
-      isJoined: true,
-      membersCount: communityToJoin.membersCount + 1,
-      channels: communityToJoin.channels || [
-        { id: `ch_${communityToJoin.id}_gen`, name: 'general', isPrivate: false, topic: 'General discussions' }
-      ],
-      members: [
-        ...(communityToJoin.members || []),
-        { id: currentUser.id, name: currentUser.name, username: currentUser.username, role: 'Member', status: 'Online', avatarText: currentUser.avatarText }
-      ]
-    };
+    const isBackend = communityToJoin._id || /^[0-9a-fA-F]{24}$/.test(commId);
+    setJoiningCommunityId(commId);
 
-    setCommunities(prev => [...prev, updatedCommunity]);
-    setDiscoverList(prev => prev.map(c => c.id === communityToJoin.id ? { ...c, isJoined: true, membersCount: c.membersCount + 1 } : c));
-    triggerToast(`🎉 Joined "${communityToJoin.name}" successfully!`);
+    if (isBackend) {
+      try {
+        const res = await communityService.joinCommunity(commId);
+        const updatedCount = res?.community?.memberCount || (communityToJoin.membersCount || 0) + 1;
+        const currentUid = authService.getCurrentUserId() || currentUser.id;
+        const updatedCommunity = {
+          ...communityToJoin,
+          userRole: 'Member',
+          isJoined: true,
+          membersCount: updatedCount,
+          members: [
+            ...(communityToJoin.members || []),
+            { id: currentUid, name: currentUser.name, username: currentUser.username, role: 'Member', status: 'Online', avatarText: currentUser.avatarText }
+          ]
+        };
+        setCommunities((prev) => [...prev.filter((c) => c.id !== commId && c._id !== commId), updatedCommunity]);
+        setDiscoverList((prev) =>
+          prev.map((c) =>
+            c.id === commId || c._id === commId ? { ...c, isJoined: true, membersCount: updatedCount } : c
+          )
+        );
+        triggerToast(`🎉 ${res?.message || `Joined "${communityToJoin.name}" successfully!`}`);
+      } catch (err) {
+        const msg = err.friendlyMessage || err.response?.data?.message || 'Failed to join community';
+        triggerToast(`⚠️ ${msg}`);
+      } finally {
+        setJoiningCommunityId(null);
+      }
+    } else {
+      // Mock fallback
+      const updatedCommunity = {
+        ...communityToJoin,
+        userRole: 'Member',
+        isJoined: true,
+        membersCount: communityToJoin.membersCount + 1,
+        channels: communityToJoin.channels || [
+          { id: `ch_${communityToJoin.id}_gen`, name: 'general', isPrivate: false, topic: 'General discussions' }
+        ],
+        members: [
+          ...(communityToJoin.members || []),
+          { id: currentUser.id, name: currentUser.name, username: currentUser.username, role: 'Member', status: 'Online', avatarText: currentUser.avatarText }
+        ]
+      };
+
+      setCommunities((prev) => [...prev, updatedCommunity]);
+      setDiscoverList((prev) =>
+        prev.map((c) => (c.id === communityToJoin.id ? { ...c, isJoined: true, membersCount: c.membersCount + 1 } : c))
+      );
+      triggerToast(`🎉 Joined "${communityToJoin.name}" successfully!`);
+      setJoiningCommunityId(null);
+    }
   };
 
-  // Helper: Create Community
-  const handleCreateCommunitySubmit = (e) => {
+  // Default channel preview helper for templates
+  const getTemplateDefaultChannels = (templateName) => {
+    if (templateName === 'Gaming') {
+      return ['general', 'clips-and-highlights', 'lfg-party'];
+    } else if (templateName === 'Study Group') {
+      return ['general', 'notes-resources', 'homework-help'];
+    } else if (templateName === 'School Club') {
+      return ['announcements', 'event-planning', 'general'];
+    } else if (templateName === 'Friends') {
+      return ['general', 'announcements', 'lounge'];
+    }
+    return ['general', 'announcements', 'lounge'];
+  };
+
+  // Template selection matching Server.png
+  const handleSelectTemplate = (templateName) => {
+    setSelectedServerTemplate(templateName);
+    const suggestedCategory =
+      templateName === 'Gaming' ? 'Gaming' :
+        templateName === 'Study Group' ? 'Education' :
+          templateName === 'School Club' ? 'Education' : 'General';
+
+    const defaultAvatar =
+      templateName === 'Gaming' ? '🎮' :
+        templateName === 'Study Group' ? '📚' :
+          templateName === 'School Club' ? '🏫' :
+            templateName === 'Friends' ? '👥' : '💻';
+
+    setSelectedServerAvatar(defaultAvatar);
+
+    setNewCommunityForm(prev => ({
+      ...prev,
+      name: `${currentUser.name}'s ${templateName === 'General' ? 'Server' : templateName + ' Server'}`,
+      category: suggestedCategory
+    }));
+    setCreateServerStep(2);
+  };
+
+  // Helper: Create Community (Matching Server (1).png customization)
+  const handleCreateCommunitySubmit = async (e) => {
     e.preventDefault();
-    if (!newCommunityForm.name.trim()) return;
+    const rawName = newCommunityForm.name.trim();
+    if (!rawName) return;
 
-    const newId = `comm_${Date.now()}`;
-    const createdCommunity = {
-      id: newId,
-      name: newCommunityForm.name.trim(),
-      slug: newCommunityForm.name.trim().toLowerCase().replace(/\s+/g, '-'),
-      icon: newCommunityForm.name.trim().slice(0, 2).toUpperCase(),
-      iconBg: '#F0E7FF',
-      iconColor: '#B794F6',
-      category: newCommunityForm.category,
-      description: newCommunityForm.description.trim() || 'A new vibrant community.',
-      membersCount: 1,
-      userRole: 'Owner',
-      isJoined: true,
-      channels: [
-        { id: `ch_${newId}_gen`, name: 'general', isPrivate: false, topic: 'General discussions' },
-        { id: `ch_${newId}_ann`, name: 'announcements', isPrivate: false, isAnnouncement: true, topic: 'Official updates' },
-        { id: `ch_${newId}_help`, name: 'support', isPrivate: false, topic: 'Community support' }
-      ],
-      members: [
-        { id: currentUser.id, name: currentUser.name, username: currentUser.username, role: 'Owner', status: 'Online', avatarText: currentUser.avatarText }
-      ]
-    };
+    if (rawName.length < 3 || rawName.length > 80) {
+      setCreateCommunityError('Community name must be between 3 and 80 characters.');
+      return;
+    }
 
-    setCommunities(prev => [createdCommunity, ...prev]);
-    setIsCreateModalOpen(false);
-    setNewCommunityForm({ name: '', category: 'Development', description: '', isPrivate: false });
-    handleOpenCommunity(createdCommunity);
-    triggerToast(`🚀 Community "${createdCommunity.name}" created!`);
+    setIsCreatingCommunity(true);
+    setCreateCommunityError(null);
+
+    try {
+      const res = await communityService.createCommunity({
+        name: rawName,
+        description: newCommunityForm.description.trim() || `${selectedServerTemplate} community created on Yappy.`,
+        category: newCommunityForm.category || 'General',
+        visibility: 'public',
+      });
+
+      if (res?.success && res.community) {
+        const currentUid = authService.getCurrentUserId() || currentUser.id;
+        const mapped = mapBackendCommunity(res.community, currentUid);
+        mapped.icon = selectedServerAvatar;
+
+        // Automatically create initial default channel '#general' on backend
+        try {
+          const chanRes = await channelService.createChannel(res.community._id, {
+            name: 'general',
+            description: 'General discussions',
+            type: 'text',
+          });
+          if (chanRes?.success && chanRes.channel) {
+            mapped.channels = [mapBackendChannel(chanRes.channel)];
+          }
+        } catch (chanErr) {
+          console.warn('Could not auto-create general channel:', chanErr);
+        }
+
+        setCommunities((prev) => [mapped, ...prev]);
+        setDiscoverList((prev) => [mapped, ...prev]);
+        setIsCreateModalOpen(false);
+        setCreateServerStep(1);
+        setNewCommunityForm({ name: '', category: 'Development', description: '', isPrivate: false });
+        handleOpenCommunity(mapped);
+        triggerToast(`🚀 Server "${mapped.name}" created!`);
+      }
+    } catch (err) {
+      const msg = err.friendlyMessage || err.response?.data?.message || 'Failed to create community.';
+      setCreateCommunityError(msg);
+    } finally {
+      setIsCreatingCommunity(false);
+    }
   };
+
+  // Helper: Create Text Channel in Community Workspace
+  const handleCreateChannelSubmit = async (e) => {
+    e.preventDefault();
+    const rawName = newChannelForm.name.trim();
+    if (!rawName) return;
+
+    const cleanChannelName = rawName.toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    if (cleanChannelName.length < 2 || cleanChannelName.length > 80) {
+      setCreateChannelError('Channel name must be between 2 and 80 characters.');
+      return;
+    }
+
+    setIsCreatingChannel(true);
+    setCreateChannelError(null);
+
+    const commId = activeCommunity?._id || activeCommunity?.id;
+    const isBackend = activeCommunity?._id || /^[0-9a-fA-F]{24}$/.test(commId);
+
+    if (isBackend) {
+      try {
+        const res = await channelService.createChannel(commId, {
+          name: cleanChannelName,
+          description: newChannelForm.topic?.trim() || '',
+          type: newChannelForm.isAnnouncement ? 'announcement' : 'text',
+        });
+
+        if (res?.success && res.channel) {
+          const mappedChan = mapBackendChannel(res.channel);
+          const updatedChannels = [...(activeCommunity?.channels || []), mappedChan];
+
+          setActiveCommunity((prev) => ({
+            ...prev,
+            channels: updatedChannels,
+          }));
+
+          setCommunities((prev) =>
+            prev.map((c) => {
+              if (c.id === commId || c._id === commId) {
+                return { ...c, channels: updatedChannels };
+              }
+              return c;
+            })
+          );
+
+          setActiveChannelId(mappedChan.id);
+          setIsCreateChannelModalOpen(false);
+          setNewChannelForm({ name: '', topic: '', isPrivate: false, isAnnouncement: false });
+          triggerToast(`🎉 Created #${mappedChan.name} channel!`);
+        }
+      } catch (err) {
+        const msg = err.friendlyMessage || err.response?.data?.message || 'Failed to create channel.';
+        setCreateChannelError(msg);
+      } finally {
+        setIsCreatingChannel(false);
+      }
+    } else {
+      // Mock fallback
+      const newChanId = generateId('ch');
+      const newChannelObj = {
+        id: newChanId,
+        name: cleanChannelName,
+        isPrivate: Boolean(newChannelForm.isPrivate),
+        topic: newChannelForm.topic.trim() || 'Welcome to the new channel!',
+      };
+
+      const updatedChannels = [...(activeCommunity?.channels || []), newChannelObj];
+
+      setActiveCommunity((prev) => ({
+        ...prev,
+        channels: updatedChannels,
+      }));
+
+      setCommunities((prev) =>
+        prev.map((c) => {
+          if (c.id === activeCommunity.id) {
+            return { ...c, channels: updatedChannels };
+          }
+          return c;
+        })
+      );
+
+      setActiveChannelId(newChanId);
+      setIsCreateChannelModalOpen(false);
+      setNewChannelForm({ name: '', topic: '', isPrivate: false, isAnnouncement: false });
+      triggerToast(`Created #${cleanChannelName} channel!`);
+      setIsCreatingChannel(false);
+    }
+  };
+
+  // Helper: Open Edit Channel Modal
+  const handleOpenEditChannel = (channel) => {
+    setEditingChannel(channel);
+    setEditChannelForm({
+      name: channel.name,
+      topic: channel.description || channel.topic || '',
+      type: channel.type || (channel.isAnnouncement ? 'announcement' : 'text'),
+    });
+    setUpdateChannelError(null);
+    setIsEditChannelModalOpen(true);
+  };
+
+  // Helper: Submit Update Channel
+  const handleUpdateChannelSubmit = async (e) => {
+    e.preventDefault();
+    if (!editingChannel) return;
+    const cleanName = editChannelForm.name.trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-');
+    if (cleanName.length < 2 || cleanName.length > 80) {
+      setUpdateChannelError('Channel name must be between 2 and 80 characters.');
+      return;
+    }
+
+    setIsUpdatingChannel(true);
+    setUpdateChannelError(null);
+
+    const channelId = editingChannel._id || editingChannel.id;
+    const isBackend = editingChannel._id || /^[0-9a-fA-F]{24}$/.test(channelId);
+
+    if (isBackend) {
+      try {
+        const res = await channelService.updateChannel(channelId, {
+          name: cleanName,
+          description: editChannelForm.topic.trim(),
+          type: editChannelForm.type,
+        });
+
+        if (res?.success && res.channel) {
+          const updated = mapBackendChannel(res.channel);
+          const updatedChannels = (activeCommunity?.channels || []).map((ch) =>
+            ch.id === channelId || ch._id === channelId ? updated : ch
+          );
+
+          setActiveCommunity((prev) => ({ ...prev, channels: updatedChannels }));
+          setCommunities((prev) =>
+            prev.map((c) =>
+              c.id === activeCommunity?.id || c._id === activeCommunity?._id ? { ...c, channels: updatedChannels } : c
+            )
+          );
+
+          setIsEditChannelModalOpen(false);
+          setEditingChannel(null);
+          triggerToast(`✅ Updated #${updated.name} successfully!`);
+        }
+      } catch (err) {
+        setUpdateChannelError(err.friendlyMessage || err.response?.data?.message || 'Failed to update channel.');
+      } finally {
+        setIsUpdatingChannel(false);
+      }
+    } else {
+      // Mock fallback
+      const updatedChannels = (activeCommunity?.channels || []).map((ch) =>
+        ch.id === channelId
+          ? { ...ch, name: cleanName, topic: editChannelForm.topic.trim(), isAnnouncement: editChannelForm.type === 'announcement' }
+          : ch
+      );
+      setActiveCommunity((prev) => ({ ...prev, channels: updatedChannels }));
+      setCommunities((prev) =>
+        prev.map((c) => (c.id === activeCommunity?.id ? { ...c, channels: updatedChannels } : c))
+      );
+      setIsEditChannelModalOpen(false);
+      setEditingChannel(null);
+      setIsUpdatingChannel(false);
+      triggerToast(`✅ Updated #${cleanName} successfully!`);
+    }
+  };
+
+  // Helper: Open Delete Channel Modal
+  const handleOpenDeleteChannel = (channel) => {
+    setDeletingChannel(channel);
+    setDeleteChannelError(null);
+    setIsDeleteChannelModalOpen(true);
+  };
+
+  // Helper: Confirm Delete Channel
+  const handleDeleteChannelConfirm = async () => {
+    if (!deletingChannel) return;
+    setIsDeletingChannel(true);
+    setDeleteChannelError(null);
+
+    const channelId = deletingChannel._id || deletingChannel.id;
+    const isBackend = deletingChannel._id || /^[0-9a-fA-F]{24}$/.test(channelId);
+
+    if (isBackend) {
+      try {
+        const res = await channelService.deleteChannel(channelId);
+        if (res?.success) {
+          const updatedChannels = (activeCommunity?.channels || []).filter(
+            (ch) => ch.id !== channelId && ch._id !== channelId
+          );
+
+          setActiveCommunity((prev) => ({ ...prev, channels: updatedChannels }));
+          setCommunities((prev) =>
+            prev.map((c) =>
+              c.id === activeCommunity?.id || c._id === activeCommunity?._id ? { ...c, channels: updatedChannels } : c
+            )
+          );
+
+          if (activeChannelId === channelId) {
+            setActiveChannelId(updatedChannels[0]?.id || '');
+          }
+
+          setIsDeleteChannelModalOpen(false);
+          setDeletingChannel(null);
+          triggerToast(`🗑️ Channel deleted successfully.`);
+        }
+      } catch (err) {
+        setDeleteChannelError(err.friendlyMessage || err.response?.data?.message || 'Failed to delete channel.');
+      } finally {
+        setIsDeletingChannel(false);
+      }
+    } else {
+      // Mock fallback
+      const updatedChannels = (activeCommunity?.channels || []).filter((ch) => ch.id !== channelId);
+      setActiveCommunity((prev) => ({ ...prev, channels: updatedChannels }));
+      setCommunities((prev) =>
+        prev.map((c) => (c.id === activeCommunity?.id ? { ...c, channels: updatedChannels } : c))
+      );
+      if (activeChannelId === channelId) {
+        setActiveChannelId(updatedChannels[0]?.id || '');
+      }
+      setIsDeleteChannelModalOpen(false);
+      setDeletingChannel(null);
+      setIsDeletingChannel(false);
+      triggerToast(`🗑️ Channel deleted successfully.`);
+    }
+  };
+
+
 
   // Helper: Join via Invite Code
   const handleJoinWithCodeSubmit = (e) => {
     e.preventDefault();
     if (!joinCodeInput.trim()) return;
 
-    // Check if matching code or simulate successful join
     const cleanCode = joinCodeInput.trim().toUpperCase();
+    const newId = generateId('comm_code');
     const joinedComm = {
-      id: `comm_code_${Date.now()}`,
+      id: newId,
       name: `Community (${cleanCode})`,
       slug: cleanCode.toLowerCase(),
       icon: '✨',
@@ -210,7 +848,7 @@ const Dashboard = ({ onFormSwitch }) => {
       userRole: 'Member',
       isJoined: true,
       channels: [
-        { id: `ch_code_${Date.now()}_gen`, name: 'general', isPrivate: false, topic: 'Community chat' }
+        { id: generateId('ch'), name: 'general', isPrivate: false, topic: 'Community chat' }
       ],
       members: [
         { id: currentUser.id, name: currentUser.name, username: currentUser.username, role: 'Member', status: 'Online', avatarText: currentUser.avatarText }
@@ -228,7 +866,7 @@ const Dashboard = ({ onFormSwitch }) => {
   const handleCopyInviteCode = () => {
     const code = activeCommunity?.inviteCode || (activeCommunity?.slug ? `${activeCommunity.slug.toUpperCase()}-2026` : 'COMM-INVITE');
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(code).catch(() => {});
+      navigator.clipboard.writeText(code).catch(() => { });
     }
     setInviteCopied(true);
     triggerToast(`Copied invite code: ${code}`);
@@ -240,7 +878,12 @@ const Dashboard = ({ onFormSwitch }) => {
     m => m.id === currentUser.id || m.username === currentUser.username
   );
   const effectiveCommunityRole = userMemberRecord?.role || activeCommunity?.userRole || 'Member';
-  const isCommunityOwner = effectiveCommunityRole === 'Owner';
+  const currentUserId = currentUser.id || authService.getCurrentUserId();
+  const isCommunityOwner = Boolean(
+    (currentUserId && activeCommunity?.owner && String(activeCommunity.owner) === String(currentUserId)) ||
+    activeCommunity?.userRole === 'Owner' ||
+    effectiveCommunityRole === 'Owner'
+  );
   const isCommunityAdmin = effectiveCommunityRole === 'Admin';
   const canManageMembers = isCommunityOwner || isCommunityAdmin || currentUser?.role === 'Community Lead';
 
@@ -310,7 +953,7 @@ const Dashboard = ({ onFormSwitch }) => {
 
     const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase() || 'U';
     const newMember = {
-      id: `m_${Date.now()}`,
+      id: generateId('m'),
       name,
       username: cleanUsername,
       role: assignedRole,
@@ -403,7 +1046,7 @@ const Dashboard = ({ onFormSwitch }) => {
     if (!chatInputText.trim() && !attachedFile) return;
 
     const newMessage = {
-      id: `msg_${Date.now()}`,
+      id: generateId('msg'),
       senderId: currentUser.id,
       senderName: currentUser.name,
       senderRole: activeCommunity?.userRole || 'Member',
@@ -479,17 +1122,101 @@ const Dashboard = ({ onFormSwitch }) => {
   // Direct Messages Handling
   const activeDm = directMessages.find(d => d.id === activeDmId) || directMessages[0];
 
+  // Memoized DM search filter
+  const filteredDirectMessages = useMemo(() => {
+    if (!dmSearchQuery.trim()) return directMessages;
+    const q = dmSearchQuery.toLowerCase();
+    return directMessages.filter(dm =>
+      dm.name.toLowerCase().includes(q) ||
+      (dm.username && dm.username.toLowerCase().includes(q))
+    );
+  }, [directMessages, dmSearchQuery]);
+
+  // Filter messages within the currently active DM conversation
+  const activeDmMessages = useMemo(() => {
+    const msgs = activeDm?.messages || [];
+    if (!dmMessageSearchQuery.trim()) return msgs;
+    const q = dmMessageSearchQuery.toLowerCase();
+    return msgs.filter(m =>
+      m.content.toLowerCase().includes(q) ||
+      (m.senderName && m.senderName.toLowerCase().includes(q))
+    );
+  }, [activeDm, dmMessageSearchQuery]);
+
+  const renderMessageTextWithMentions = (text) => {
+    if (!text) return null;
+    const parts = text.split(/(@[a-zA-Z0-9_-]+)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith('@')) {
+        return (
+          <span key={i} className="dm-mention-tag">
+            {part}
+          </span>
+        );
+      }
+      return part;
+    });
+  };
+
+  // Moderator Hub Filter & Search
+  const filteredModerationItems = useMemo(() => {
+    return moderationItems.filter(item => {
+      if (modFilterTab === 'high' && item.aiSeverity?.toLowerCase() !== 'high') return false;
+      if (modFilterTab === 'medium' && item.aiSeverity?.toLowerCase() !== 'medium') return false;
+      if (modFilterTab === 'spam' && !item.classification?.toLowerCase().includes('spam')) return false;
+      if (modFilterTab === 'harassment' && !item.classification?.toLowerCase().includes('harassment')) return false;
+      if (modSearchQuery.trim()) {
+        const q = modSearchQuery.toLowerCase();
+        const matchText = item.messageText?.toLowerCase().includes(q);
+        const matchSender = item.senderName?.toLowerCase().includes(q) || item.senderUsername?.toLowerCase().includes(q);
+        const matchChannel = item.channelName?.toLowerCase().includes(q);
+        if (!matchText && !matchSender && !matchChannel) return false;
+      }
+      return true;
+    });
+  }, [moderationItems, modFilterTab, modSearchQuery]);
+
+  const modFilterCounts = useMemo(() => {
+    const searchFilter = (item) => {
+      if (!modSearchQuery.trim()) return true;
+      const q = modSearchQuery.toLowerCase();
+      return (
+        item.messageText?.toLowerCase().includes(q) ||
+        item.senderName?.toLowerCase().includes(q) ||
+        item.senderUsername?.toLowerCase().includes(q) ||
+        item.channelName?.toLowerCase().includes(q)
+      );
+    };
+
+    const searchable = moderationItems.filter(searchFilter);
+    return {
+      all: searchable.length,
+      high: searchable.filter(i => i.aiSeverity?.toLowerCase() === 'high').length,
+      medium: searchable.filter(i => i.aiSeverity?.toLowerCase() === 'medium').length,
+      spam: searchable.filter(i => i.classification?.toLowerCase().includes('spam')).length,
+      harassment: searchable.filter(i => i.classification?.toLowerCase().includes('harassment')).length,
+    };
+  }, [moderationItems, modSearchQuery]);
+
   const handleSendDm = (e) => {
     e.preventDefault();
-    if (!dmInputText.trim()) return;
+    if (!dmInputText.trim() && !dmAttachedFile) return;
+    if (!activeDm) return;
 
     const newDmMessage = {
-      id: `dmsg_${Date.now()}`,
+      id: generateId('dmsg'),
       senderId: currentUser.id,
       senderName: currentUser.name,
       timestamp: 'Just now',
       content: dmInputText.trim(),
-      reactions: {}
+      reactions: {},
+      userReactions: [],
+      replyTo: dmReplyingTo ? dmReplyingTo.id : null,
+      replySnippet: dmReplyingTo ? { senderName: dmReplyingTo.senderName, content: dmReplyingTo.content } : null,
+      attachments: dmAttachedFile
+        ? [{ name: dmAttachedFile.name, size: `${Math.round(dmAttachedFile.size / 1024) || 1} KB` }]
+        : [],
+      status: 'delivered'
     };
 
     setDirectMessages(prev => prev.map(dm => {
@@ -501,14 +1228,168 @@ const Dashboard = ({ onFormSwitch }) => {
     }));
 
     setDmInputText('');
+    setDmAttachedFile(null);
+    setDmReplyingTo(null);
   };
 
-  // Moderation Actions
+  const handleToggleDmReaction = (msgId, emoji) => {
+    if (!activeDm) return;
+    setDirectMessages(prev => prev.map(dm => {
+      if (dm.id !== activeDm.id) return dm;
+      const updatedMessages = dm.messages.map(msg => {
+        if (msg.id !== msgId) return msg;
+        const userReactions = Array.isArray(msg.userReactions) ? [...msg.userReactions] : [];
+        const hasReacted = userReactions.includes(emoji);
+        const currentReactions = { ...(msg.reactions || {}) };
+
+        if (hasReacted) {
+          const nextUserReactions = userReactions.filter(e => e !== emoji);
+          const currentCount = currentReactions[emoji] || 1;
+          const nextCount = Math.max(0, currentCount - 1);
+          if (nextCount === 0) {
+            delete currentReactions[emoji];
+          } else {
+            currentReactions[emoji] = nextCount;
+          }
+          return {
+            ...msg,
+            reactions: currentReactions,
+            userReactions: nextUserReactions
+          };
+        } else {
+          const nextUserReactions = [...userReactions, emoji];
+          const currentCount = currentReactions[emoji] || 0;
+          currentReactions[emoji] = currentCount + 1;
+          return {
+            ...msg,
+            reactions: currentReactions,
+            userReactions: nextUserReactions
+          };
+        }
+      });
+      return { ...dm, messages: updatedMessages };
+    }));
+  };
+
+  const handleStartEditDmMessage = (msg) => {
+    setEditingDmMessageId(msg.id);
+    setEditingDmContent(msg.content);
+  };
+
+  const handleSaveEditDmMessage = (msgId) => {
+    if (!editingDmContent.trim() || !activeDm) return;
+    setDirectMessages(prev => prev.map(dm => {
+      if (dm.id !== activeDm.id) return dm;
+      const updatedMessages = dm.messages.map(msg => {
+        if (msg.id !== msgId) return msg;
+        return {
+          ...msg,
+          content: editingDmContent.trim(),
+          isEdited: true
+        };
+      });
+      return { ...dm, messages: updatedMessages };
+    }));
+    setEditingDmMessageId(null);
+    setEditingDmContent('');
+    triggerToast('Message updated.');
+  };
+
+  const handleDeleteDmMessage = (msgId) => {
+    if (!activeDm) return;
+    setDirectMessages(prev => prev.map(dm => {
+      if (dm.id !== activeDm.id) return dm;
+      return {
+        ...dm,
+        messages: dm.messages.filter(m => m.id !== msgId)
+      };
+    }));
+    triggerToast('Message deleted.');
+  };
+
+  const handleCreateConversation = (e) => {
+    e.preventDefault();
+    setNewDmError('');
+
+    if (newDmType === 'direct') {
+      const recipient = newDmRecipient.trim();
+      if (!recipient) {
+        setNewDmError('Please enter a username or name.');
+        return;
+      }
+      const cleanUser = recipient.replace(/^@/, '');
+      const existing = directMessages.find(d =>
+        !d.isGroup && (
+          (d.username && d.username.toLowerCase() === cleanUser.toLowerCase()) ||
+          d.name.toLowerCase() === cleanUser.toLowerCase()
+        )
+      );
+      if (existing) {
+        setActiveDmId(existing.id);
+        setIsNewDmModalOpen(false);
+        setNewDmRecipient('');
+        setMobileDmView('chat');
+        triggerToast(`Switched to conversation with ${existing.name}.`);
+        return;
+      }
+
+      const initials = cleanUser.slice(0, 2).toUpperCase() || 'U';
+      const newDm = {
+        id: generateId('dm'),
+        isGroup: false,
+        name: recipient,
+        username: cleanUser.toLowerCase(),
+        role: 'Member',
+        avatarText: initials,
+        status: 'Online',
+        unreadCount: 0,
+        messages: []
+      };
+
+      setDirectMessages(prev => [newDm, ...prev]);
+      setActiveDmId(newDm.id);
+      setIsNewDmModalOpen(false);
+      setNewDmRecipient('');
+      setMobileDmView('chat');
+      triggerToast(`Started direct conversation with ${recipient}!`);
+    } else {
+      const groupName = newDmGroupName.trim();
+      if (!groupName) {
+        setNewDmError('Please enter a group conversation name.');
+        return;
+      }
+      const rawMembers = newDmGroupMembers.trim();
+      const membersList = rawMembers
+        ? rawMembers.split(',').map(m => m.trim().replace(/^@/, '')).filter(Boolean)
+        : [];
+
+      const participants = [currentUser.name, ...membersList];
+      const newGroupDm = {
+        id: generateId('dm_grp'),
+        isGroup: true,
+        name: groupName,
+        participants,
+        avatarText: '👥',
+        unreadCount: 0,
+        messages: []
+      };
+
+      setDirectMessages(prev => [newGroupDm, ...prev]);
+      setActiveDmId(newGroupDm.id);
+      setIsNewDmModalOpen(false);
+      setNewDmGroupName('');
+      setNewDmGroupMembers('');
+      setMobileDmView('chat');
+      triggerToast(`Created group conversation "${groupName}"!`);
+    }
+  };
+
+  // Moderation Actions (Pure ID generation)
   const handleModerationAction = (item, action) => {
     setModerationItems(prev => prev.filter(m => m.id !== item.id));
 
     const newLog = {
-      id: `log_${Date.now()}`,
+      id: generateId('log'),
       timestamp: 'Just now',
       moderator: currentUser.name,
       action: action === 'approve' ? 'Approved Message' : action === 'delete' ? 'Deleted Message' : action === 'warn' ? 'Warned User' : 'Banned User',
@@ -665,7 +1546,14 @@ const Dashboard = ({ onFormSwitch }) => {
           <button
             type="button"
             className="sidebar-logout-btn"
-            onClick={() => onFormSwitch && onFormSwitch('login')}
+            onClick={async () => {
+              try {
+                await authService.logout();
+              } catch (e) {
+                console.warn('Logout notification error:', e);
+              }
+              if (onFormSwitch) onFormSwitch('login');
+            }}
             title="Log Out"
             aria-label="Log Out"
           >
@@ -791,34 +1679,45 @@ const Dashboard = ({ onFormSwitch }) => {
                   </div>
 
                   <div className="card-grid">
-                    {communities
-                      .filter(c => !globalSearch || c.name.toLowerCase().includes(globalSearch.toLowerCase()))
-                      .slice(0, 3)
-                      .map(comm => (
-                        <div key={comm.id} className="community-card">
-                          <div
-                            className="card-icon"
-                            style={{ backgroundColor: comm.iconBg, color: comm.iconColor }}
-                          >
-                            {comm.icon}
-                          </div>
-                          <h3 className="card-title">{comm.name}</h3>
-                          <p className="card-desc">{comm.description}</p>
-                          <div className="card-footer">
-                            <span className="member-count">👥 {comm.membersCount} members</span>
-                            <div className="card-actions">
-                              <span className="badge-role">{comm.userRole}</span>
-                              <button
-                                type="button"
-                                className="btn-card-open"
-                                onClick={() => handleOpenCommunity(comm)}
-                              >
-                                Enter →
-                              </button>
+                    {communitiesLoading ? (
+                      <div className="communities-loading-state" style={{ gridColumn: '1 / -1', padding: '2rem 1rem' }}>
+                        <div className="mini-spinner"></div>
+                        <span>Loading communities...</span>
+                      </div>
+                    ) : communities.length === 0 ? (
+                      <div className="communities-empty-state" style={{ gridColumn: '1 / -1', padding: '2rem 1rem' }}>
+                        <p>No communities joined yet.</p>
+                      </div>
+                    ) : (
+                      communities
+                        .filter(c => !globalSearch || c.name.toLowerCase().includes(globalSearch.toLowerCase()))
+                        .slice(0, 3)
+                        .map(comm => (
+                          <div key={comm.id} className="community-card">
+                            <div
+                              className="card-icon"
+                              style={{ backgroundColor: comm.iconBg, color: comm.iconColor }}
+                            >
+                              {comm.icon}
+                            </div>
+                            <h3 className="card-title">{comm.name}</h3>
+                            <p className="card-desc">{comm.description}</p>
+                            <div className="card-footer">
+                              <span className="member-count">👥 {comm.membersCount} members</span>
+                              <div className="card-actions">
+                                <span className="badge-role">{comm.userRole}</span>
+                                <button
+                                  type="button"
+                                  className="btn-card-open"
+                                  onClick={() => handleOpenCommunity(comm)}
+                                >
+                                  Enter →
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      ))}
+                        ))
+                    )}
                   </div>
                 </section>
 
@@ -836,34 +1735,47 @@ const Dashboard = ({ onFormSwitch }) => {
                   </div>
 
                   <div className="card-grid">
-                    {discoverList
-                      .filter(c => !globalSearch || c.name.toLowerCase().includes(globalSearch.toLowerCase()))
-                      .slice(0, 3)
-                      .map(item => {
-                        const isJoined = communities.some(c => c.id === item.id);
-                        return (
-                          <div key={item.id} className="community-card">
-                            <div
-                              className="card-icon"
-                              style={{ backgroundColor: item.iconBg, color: item.iconColor }}
-                            >
-                              {item.icon}
-                            </div>
-                            <h3 className="card-title">{item.name}</h3>
-                            <p className="card-desc">{item.description}</p>
-                            <div className="card-footer">
-                              <span className="member-count">👥 {item.membersCount} members</span>
-                              <button
-                                type="button"
-                                className={`badge-action ${isJoined ? 'joined' : 'join'}`}
-                                onClick={() => handleJoinCommunity(item)}
+                    {communitiesLoading ? (
+                      <div className="communities-loading-state" style={{ gridColumn: '1 / -1', padding: '2rem 1rem' }}>
+                        <div className="mini-spinner"></div>
+                        <span>Loading communities...</span>
+                      </div>
+                    ) : discoverList.length === 0 ? (
+                      <div className="communities-empty-state" style={{ gridColumn: '1 / -1', padding: '2rem 1rem' }}>
+                        <p>No communities found to explore.</p>
+                      </div>
+                    ) : (
+                      discoverList
+                        .filter(c => !globalSearch || c.name.toLowerCase().includes(globalSearch.toLowerCase()))
+                        .slice(0, 3)
+                        .map(item => {
+                          const isJoined = communities.some(c => c.id === item.id || c._id === item.id || (item._id && c._id === item._id));
+                          const isJoining = joiningCommunityId === (item._id || item.id);
+                          return (
+                            <div key={item.id} className="community-card">
+                              <div
+                                className="card-icon"
+                                style={{ backgroundColor: item.iconBg, color: item.iconColor }}
                               >
-                                {isJoined ? 'Joined ✓' : 'Join'}
-                              </button>
+                                {item.icon}
+                              </div>
+                              <h3 className="card-title">{item.name}</h3>
+                              <p className="card-desc">{item.description}</p>
+                              <div className="card-footer">
+                                <span className="member-count">👥 {item.membersCount} members</span>
+                                <button
+                                  type="button"
+                                  className={`badge-action ${isJoined ? 'joined' : 'join'}`}
+                                  disabled={isJoined || isJoining}
+                                  onClick={() => handleJoinCommunity(item)}
+                                >
+                                  {isJoining ? 'Joining...' : (isJoined ? 'Joined ✓' : 'Join')}
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })
+                    )}
                   </div>
                 </section>
               </div>
@@ -965,43 +1877,71 @@ const Dashboard = ({ onFormSwitch }) => {
               </div>
 
               <div className="card-grid">
-                {communities
-                  .filter(c => !globalSearch || c.name.toLowerCase().includes(globalSearch.toLowerCase()))
-                  .map(comm => (
-                    <div key={comm.id} className="community-card large">
-                      <div className="card-header-row">
-                        <div
-                          className="card-icon"
-                          style={{ backgroundColor: comm.iconBg, color: comm.iconColor }}
-                        >
-                          {comm.icon}
-                        </div>
-                        <span className="badge-role">{comm.userRole}</span>
-                      </div>
-                      <h3 className="card-title">{comm.name}</h3>
-                      <p className="card-desc">{comm.description}</p>
-                      <div className="channels-pill-preview">
-                        {comm.channels?.slice(0, 3).map(ch => (
-                          <span key={ch.id} className="ch-pill">
-                            {ch.isPrivate ? '🔒' : '#'}{ch.name}
-                          </span>
-                        ))}
-                        {comm.channels?.length > 3 && (
-                          <span className="ch-pill more">+{comm.channels.length - 3} more</span>
-                        )}
-                      </div>
-                      <div className="card-footer">
-                        <span className="member-count">👥 {comm.membersCount} members</span>
-                        <button
-                          type="button"
-                          className="btn-card-open"
-                          onClick={() => handleOpenCommunity(comm)}
-                        >
-                          Enter Community →
-                        </button>
-                      </div>
+                {communitiesLoading ? (
+                  <div className="communities-loading-state" style={{ gridColumn: '1 / -1' }}>
+                    <div className="spinner-large"></div>
+                    <p>Loading communities from server...</p>
+                  </div>
+                ) : communitiesError && communities.length === 0 ? (
+                  <div className="communities-error-state" style={{ gridColumn: '1 / -1' }}>
+                    <p>⚠️ {communitiesError}</p>
+                    <button type="button" className="btn-retry-action" onClick={fetchCommunities}>
+                      Retry Loading
+                    </button>
+                  </div>
+                ) : communities.length === 0 ? (
+                  <div className="communities-empty-state" style={{ gridColumn: '1 / -1' }}>
+                    <div className="empty-icon">🌐</div>
+                    <h3>No communities joined yet</h3>
+                    <p>Explore interest hubs in Discover Communities or create your own space!</p>
+                    <div className="empty-actions">
+                      <button type="button" className="btn-primary-purple" onClick={() => setIsCreateModalOpen(true)}>
+                        + Create Community
+                      </button>
+                      <button type="button" className="btn-secondary-outline" onClick={() => setActiveTab('discover')}>
+                        Explore Discover
+                      </button>
                     </div>
-                  ))}
+                  </div>
+                ) : (
+                  communities
+                    .filter(c => !globalSearch || c.name.toLowerCase().includes(globalSearch.toLowerCase()))
+                    .map(comm => (
+                      <div key={comm.id} className="community-card large">
+                        <div className="card-header-row">
+                          <div
+                            className="card-icon"
+                            style={{ backgroundColor: comm.iconBg, color: comm.iconColor }}
+                          >
+                            {comm.icon}
+                          </div>
+                          <span className="badge-role">{comm.userRole}</span>
+                        </div>
+                        <h3 className="card-title">{comm.name}</h3>
+                        <p className="card-desc">{comm.description}</p>
+                        <div className="channels-pill-preview">
+                          {comm.channels?.slice(0, 3).map(ch => (
+                            <span key={ch.id} className="ch-pill">
+                              {ch.isPrivate ? '🔒' : '#'}{ch.name}
+                            </span>
+                          ))}
+                          {comm.channels?.length > 3 && (
+                            <span className="ch-pill more">+{comm.channels.length - 3} more</span>
+                          )}
+                        </div>
+                        <div className="card-footer">
+                          <span className="member-count">👥 {comm.membersCount} members</span>
+                          <button
+                            type="button"
+                            className="btn-card-open"
+                            onClick={() => handleOpenCommunity(comm)}
+                          >
+                            Enter Community →
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                )}
               </div>
             </div>
           )}
@@ -1029,37 +1969,59 @@ const Dashboard = ({ onFormSwitch }) => {
               </div>
 
               <div className="card-grid">
-                {discoverList
-                  .filter(item => discoverCategory === 'All' || item.category === discoverCategory)
-                  .filter(item => !globalSearch || item.name.toLowerCase().includes(globalSearch.toLowerCase()) || item.description.toLowerCase().includes(globalSearch.toLowerCase()))
-                  .map(item => {
-                    const isJoined = communities.some(c => c.id === item.id);
-                    return (
-                      <div key={item.id} className="community-card large">
-                        <div className="card-header-row">
-                          <div
-                            className="card-icon"
-                            style={{ backgroundColor: item.iconBg, color: item.iconColor }}
-                          >
-                            {item.icon}
+                {communitiesLoading ? (
+                  <div className="communities-loading-state" style={{ gridColumn: '1 / -1' }}>
+                    <div className="spinner-large"></div>
+                    <p>Discovering available communities...</p>
+                  </div>
+                ) : communitiesError && discoverList.length === 0 ? (
+                  <div className="communities-error-state" style={{ gridColumn: '1 / -1' }}>
+                    <p>⚠️ {communitiesError}</p>
+                    <button type="button" className="btn-retry-action" onClick={fetchCommunities}>
+                      Retry Loading
+                    </button>
+                  </div>
+                ) : discoverList.filter(item => discoverCategory === 'All' || item.category === discoverCategory).length === 0 ? (
+                  <div className="communities-empty-state" style={{ gridColumn: '1 / -1' }}>
+                    <div className="empty-icon">🔍</div>
+                    <h3>No communities found</h3>
+                    <p>No communities match the current filter. Try selecting "All" or create a new community!</p>
+                  </div>
+                ) : (
+                  discoverList
+                    .filter(item => discoverCategory === 'All' || item.category === discoverCategory)
+                    .filter(item => !globalSearch || item.name.toLowerCase().includes(globalSearch.toLowerCase()) || item.description.toLowerCase().includes(globalSearch.toLowerCase()))
+                    .map(item => {
+                      const isJoined = communities.some(c => c.id === item.id || c._id === item.id || (item._id && c._id === item._id));
+                      const isJoining = joiningCommunityId === (item._id || item.id);
+                      return (
+                        <div key={item.id} className="community-card large">
+                          <div className="card-header-row">
+                            <div
+                              className="card-icon"
+                              style={{ backgroundColor: item.iconBg, color: item.iconColor }}
+                            >
+                              {item.icon}
+                            </div>
+                            <span className="cat-badge">{item.category}</span>
                           </div>
-                          <span className="cat-badge">{item.category}</span>
+                          <h3 className="card-title">{item.name}</h3>
+                          <p className="card-desc">{item.description}</p>
+                          <div className="card-footer">
+                            <span className="member-count">👥 {item.membersCount} members</span>
+                            <button
+                              type="button"
+                              className={`badge-action ${isJoined ? 'joined' : 'join'}`}
+                              disabled={isJoined || isJoining}
+                              onClick={() => handleJoinCommunity(item)}
+                            >
+                              {isJoining ? 'Joining...' : (isJoined ? 'Joined ✓' : 'Join Community')}
+                            </button>
+                          </div>
                         </div>
-                        <h3 className="card-title">{item.name}</h3>
-                        <p className="card-desc">{item.description}</p>
-                        <div className="card-footer">
-                          <span className="member-count">👥 {item.membersCount} members</span>
-                          <button
-                            type="button"
-                            className={`badge-action ${isJoined ? 'joined' : 'join'}`}
-                            onClick={() => handleJoinCommunity(item)}
-                          >
-                            {isJoined ? 'Joined ✓' : 'Join Community'}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })
+                )}
               </div>
             </div>
           )}
@@ -1087,21 +2049,109 @@ const Dashboard = ({ onFormSwitch }) => {
                 </div>
 
                 <div className="channels-list">
-                  <div className="channel-group-label">TEXT CHANNELS</div>
-                  {activeCommunity.channels?.map(channel => (
-                    <button
+                  <div className="channel-group-header">
+                    <span className="channel-group-label">TEXT CHANNELS</span>
+                    {canManageMembers && (
+                      <button
+                        type="button"
+                        className="btn-add-channel-icon"
+                        onClick={() => {
+                          setCreateChannelError(null);
+                          setIsCreateChannelModalOpen(true);
+                        }}
+                        title="Create Channel"
+                        aria-label="Create Channel"
+                      >
+                        +
+                      </button>
+                    )}
+                  </div>
+
+                  {channelsLoading && (
+                    <div className="channels-loading-state">
+                      <div className="mini-spinner"></div>
+                      <span>Loading channels...</span>
+                    </div>
+                  )}
+
+                  {channelsError && !channelsLoading && (
+                    <div className="channels-error-state">
+                      <span>{channelsError}</span>
+                      <button
+                        type="button"
+                        className="btn-retry-channels"
+                        onClick={() => {
+                          const commId = activeCommunity._id || activeCommunity.id;
+                          fetchChannelsForCommunity(commId);
+                        }}
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  )}
+
+                  {!channelsLoading && (!activeCommunity.channels || activeCommunity.channels.length === 0) && (
+                    <div className="channels-empty-state">
+                      <p>No channels in this community yet.</p>
+                      {isCommunityOwner && (
+                        <button
+                          type="button"
+                          className="btn-create-first-chan"
+                          onClick={() => {
+                            setCreateChannelError(null);
+                            setIsCreateChannelModalOpen(true);
+                          }}
+                        >
+                          + Create Channel
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {!channelsLoading && activeCommunity.channels?.map(channel => (
+                    <div
                       key={channel.id}
-                      type="button"
-                      className={`channel-item ${activeChannelId === channel.id ? 'active' : ''}`}
-                      onClick={() => {
-                        setActiveChannelId(channel.id);
-                        setReplyingToMessage(null);
-                      }}
+                      className={`channel-item-row ${activeChannelId === channel.id ? 'active' : ''}`}
                     >
-                      <span className="channel-hash">{channel.isPrivate ? '🔒' : '#'}</span>
-                      <span className="channel-name">{channel.name}</span>
-                      {channel.isAnnouncement && <span className="announcement-tag">📢</span>}
-                    </button>
+                      <button
+                        type="button"
+                        className={`channel-item ${activeChannelId === channel.id ? 'active' : ''}`}
+                        onClick={() => {
+                          setActiveChannelId(channel.id);
+                          setReplyingToMessage(null);
+                        }}
+                      >
+                        <span className="channel-hash">{channel.isPrivate ? '🔒' : '#'}</span>
+                        <span className="channel-name">{channel.name}</span>
+                        {channel.isAnnouncement && <span className="announcement-tag">📢</span>}
+                      </button>
+                      {isCommunityOwner && (
+                        <div className="channel-item-actions">
+                          <button
+                            type="button"
+                            className="btn-chan-action"
+                            title="Edit Channel"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenEditChannel(channel);
+                            }}
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-chan-action delete"
+                            title="Delete Channel"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDeleteChannel(channel);
+                            }}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   ))}
                 </div>
 
@@ -1127,6 +2177,28 @@ const Dashboard = ({ onFormSwitch }) => {
                   </div>
 
                   <div className="chat-header-actions">
+                    {/* Server Guidelines button */}
+                    <button
+                      type="button"
+                      className="btn-header-secondary"
+                      onClick={() => setIsGuidelinesModalOpen(true)}
+                      title="View Guidelines & Rules"
+                    >
+                      📜 Rules
+                    </button>
+
+                    {/* Server Analytics button */}
+                    {canManageMembers && (
+                      <button
+                        type="button"
+                        className="btn-header-secondary"
+                        onClick={() => setIsAnalyticsModalOpen(true)}
+                        title="View Server Analytics"
+                      >
+                        📊 Analytics
+                      </button>
+                    )}
+
                     {/* Search inside channel */}
                     <div className="channel-search-box">
                       <input
@@ -1368,9 +2440,9 @@ const Dashboard = ({ onFormSwitch }) => {
             </div>
           )}
 
-          {/* 5. DIRECT MESSAGES VIEW */}
+          {/* 5. DIRECT MESSAGES VIEW (PDF-Compliant Clean 2-Column Layout) */}
           {activeTab === 'messages' && (
-            <div className="dm-workspace">
+            <div className={`dm-workspace ${mobileDmView === 'chat' ? 'show-chat-mobile' : 'show-list-mobile'}`}>
               {/* Left DM Conversations List */}
               <div className="dm-conversations-list">
                 <div className="dm-sidebar-header">
@@ -1378,78 +2450,400 @@ const Dashboard = ({ onFormSwitch }) => {
                   <button
                     type="button"
                     className="btn-new-dm"
-                    onClick={() => triggerToast('Select a contact below to chat!')}
+                    onClick={() => {
+                      setNewDmError('');
+                      setIsNewDmModalOpen(true);
+                    }}
+                    title="Start new conversation or group"
+                    aria-label="Start new conversation or group"
                   >
                     ✏️
                   </button>
                 </div>
 
-                <div className="dm-list-items">
-                  {directMessages.map(dm => (
-                    <div
-                      key={dm.id}
-                      className={`dm-list-item ${activeDm.id === dm.id ? 'active' : ''}`}
-                      onClick={() => setActiveDmId(dm.id)}
+                <div className="dm-search-wrap">
+                  <span className="dm-search-icon">🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Find conversation..."
+                    value={dmSearchQuery}
+                    onChange={(e) => setDmSearchQuery(e.target.value)}
+                    aria-label="Find conversation"
+                  />
+                  {dmSearchQuery && (
+                    <button
+                      type="button"
+                      className="dm-search-clear"
+                      onClick={() => setDmSearchQuery('')}
+                      aria-label="Clear search"
                     >
-                      <div className="dm-avatar">
-                        <span>{dm.avatarText}</span>
-                        {!dm.isGroup && <span className={`status-dot ${dm.status?.toLowerCase() || 'offline'}`} />}
-                      </div>
-                      <div className="dm-item-details">
-                        <div className="dm-item-name-row">
-                          <span className="dm-item-name">{dm.name}</span>
-                          {dm.unreadCount > 0 && <span className="dm-unread-badge">{dm.unreadCount}</span>}
-                        </div>
-                        <span className="dm-last-snippet">
-                          {dm.messages[dm.messages.length - 1]?.content || 'Start a conversation'}
-                        </span>
-                      </div>
+                      ×
+                    </button>
+                  )}
+                </div>
+
+                <div className="dm-list-items">
+                  {filteredDirectMessages.length === 0 ? (
+                    <div className="dm-empty-filter">
+                      <span>No conversations match "{dmSearchQuery}"</span>
                     </div>
-                  ))}
+                  ) : (
+                    filteredDirectMessages.map(dm => (
+                      <div
+                        key={dm.id}
+                        className={`dm-list-item ${activeDm?.id === dm.id ? 'active' : ''}`}
+                        onClick={() => {
+                          setActiveDmId(dm.id);
+                          setMobileDmView('chat');
+                          setDmMessageSearchQuery('');
+                          setDmReplyingTo(null);
+                        }}
+                      >
+                        <div className="dm-avatar">
+                          <span>{dm.avatarText}</span>
+                          {!dm.isGroup && <span className={`status-dot ${dm.status?.toLowerCase() || 'offline'}`} />}
+                        </div>
+                        <div className="dm-item-details">
+                          <div className="dm-item-name-row">
+                            <span className="dm-item-name">{dm.name}</span>
+                            {dm.unreadCount > 0 && <span className="dm-unread-badge">{dm.unreadCount}</span>}
+                          </div>
+                          <span className="dm-last-snippet">
+                            {dm.messages[dm.messages.length - 1]?.content || (dm.isGroup ? `${dm.participants?.length || 2} members` : 'Start conversation')}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
-              {/* Right Active DM Conversation Area */}
+              {/* Right DM Chat Area (Direct and Clean - Friends bloat removed) */}
               <div className="dm-chat-area">
-                <div className="dm-header">
-                  <div className="dm-header-left">
-                    <span className="dm-avatar-small">{activeDm.avatarText}</span>
-                    <div>
-                      <div className="dm-header-title">{activeDm.name}</div>
-                      <div className="dm-header-sub">
-                        {activeDm.isGroup ? activeDm.participants.join(', ') : `@${activeDm.username} • ${activeDm.status}`}
+                {activeDm ? (
+                  <>
+                    <div className="dm-header">
+                      <div className="dm-header-left">
+                        {/* Mobile back to conversation list button */}
+                        <button
+                          type="button"
+                          className="btn-dm-back-mobile"
+                          onClick={() => setMobileDmView('list')}
+                          aria-label="Back to conversations"
+                          title="Back to conversations"
+                        >
+                          ←
+                        </button>
+                        <span className="dm-avatar-small">{activeDm.avatarText}</span>
+                        <div className="dm-header-info">
+                          <div className="dm-header-title">{activeDm.name}</div>
+                          <div className="dm-header-sub">
+                            {activeDm.isGroup
+                              ? `Group • ${activeDm.participants.join(', ')}`
+                              : `@${activeDm.username} • ${activeDm.status || 'Offline'}`}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* In-Chat Message Search */}
+                      <div className="dm-header-right">
+                        <div className="dm-msg-search-box">
+                          <span className="dm-msg-search-icon">🔍</span>
+                          <input
+                            type="text"
+                            placeholder="Search in chat..."
+                            value={dmMessageSearchQuery}
+                            onChange={(e) => setDmMessageSearchQuery(e.target.value)}
+                            aria-label="Search messages in conversation"
+                          />
+                          {dmMessageSearchQuery && (
+                            <button
+                              type="button"
+                              className="dm-search-clear"
+                              onClick={() => setDmMessageSearchQuery('')}
+                              aria-label="Clear in-chat search"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
+
+                    {/* In-chat search status indicator banner */}
+                    {dmMessageSearchQuery && (
+                      <div className="dm-search-results-banner">
+                        <span>Showing search results for "<strong>{dmMessageSearchQuery}</strong>" ({activeDmMessages.length} found)</span>
+                        <button type="button" onClick={() => setDmMessageSearchQuery('')}>Clear</button>
+                      </div>
+                    )}
+
+                    {/* DM Messages Feed */}
+                    <div className="dm-messages-feed">
+                      {activeDmMessages.length === 0 ? (
+                        <div className="dm-messages-empty">
+                          {dmMessageSearchQuery ? (
+                            <p>No messages match your search query "{dmMessageSearchQuery}".</p>
+                          ) : (
+                            <div className="dm-conversation-start-card">
+                              <span className="dm-start-avatar">{activeDm.avatarText}</span>
+                              <h4>{activeDm.name}</h4>
+                              <p>
+                                {activeDm.isGroup
+                                  ? `This is the start of the ${activeDm.name} group conversation.`
+                                  : `This is the beginning of your direct message history with @${activeDm.username}.`}
+                              </p>
+                              <span className="dm-start-sub">Send a friendly greeting or share an attachment below.</span>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        activeDmMessages.map(m => {
+                          const isOwn = m.senderId === currentUser.id;
+                          const parentMessage = m.replyTo
+                            ? activeDm.messages.find(orig => orig.id === m.replyTo) || m.replySnippet
+                            : null;
+                          const isEditingThis = editingDmMessageId === m.id;
+
+                          return (
+                            <div
+                              key={m.id}
+                              className={`dm-message-row ${isOwn ? 'sent' : 'received'}`}
+                            >
+                              <div className="dm-bubble">
+                                {/* Replied-to Quote Snippet */}
+                                {parentMessage && (
+                                  <div className="dm-quoted-reply">
+                                    <span className="dm-quoted-reply-icon">↳</span>
+                                    <span className="dm-quoted-sender">@{parentMessage.senderName}</span>
+                                    <span className="dm-quoted-text">
+                                      {typeof parentMessage.content === 'string' ? parentMessage.content.slice(0, 70) : ''}
+                                    </span>
+                                  </div>
+                                )}
+
+                                <div className="dm-sender-tag">
+                                  <span className="dm-sender-name">{m.senderName}</span>
+                                  <span className="dm-timestamp">{m.timestamp}</span>
+                                  {m.isEdited && <span className="dm-edited-tag">(edited)</span>}
+                                  {isOwn && (
+                                    <span className="dm-delivery-status" title="Delivered">
+                                      ✓✓ Delivered
+                                    </span>
+                                  )}
+                                </div>
+
+                                {isEditingThis ? (
+                                  <div className="dm-inline-edit-box">
+                                    <input
+                                      type="text"
+                                      className="dm-inline-edit-input"
+                                      value={editingDmContent}
+                                      onChange={(e) => setEditingDmContent(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') handleSaveEditDmMessage(m.id);
+                                        if (e.key === 'Escape') setEditingDmMessageId(null);
+                                      }}
+                                      autoFocus
+                                    />
+                                    <div className="dm-inline-edit-buttons">
+                                      <button
+                                        type="button"
+                                        className="btn-dm-save-edit"
+                                        onClick={() => handleSaveEditDmMessage(m.id)}
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn-dm-cancel-edit"
+                                        onClick={() => setEditingDmMessageId(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                    <span className="dm-edit-key-hint">Press Enter to save, Escape to cancel</span>
+                                  </div>
+                                ) : (
+                                  <div className="dm-content-text">
+                                    {renderMessageTextWithMentions(m.content)}
+                                  </div>
+                                )}
+
+                                {/* Attachments */}
+                                {m.attachments && m.attachments.length > 0 && (
+                                  <div className="dm-attachments-container">
+                                    {m.attachments.map((att, idx) => (
+                                      <div key={idx} className="dm-attachment-badge">
+                                        <span className="att-file-icon">📎</span>
+                                        <div className="att-meta">
+                                          <span className="att-file-name">{att.name}</span>
+                                          <span className="att-file-size">{att.size}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Reaction Pills */}
+                                {m.reactions && Object.keys(m.reactions).length > 0 && (
+                                  <div className="dm-reactions-row">
+                                    {Object.entries(m.reactions).map(([emoji, count]) => {
+                                      const userReacted = Array.isArray(m.userReactions) && m.userReactions.includes(emoji);
+                                      return (
+                                        <button
+                                          key={emoji}
+                                          type="button"
+                                          className={`dm-reaction-pill ${userReacted ? 'active' : ''}`}
+                                          onClick={() => handleToggleDmReaction(m.id, emoji)}
+                                          title={`React with ${emoji}`}
+                                        >
+                                          <span className="dm-reaction-emoji">{emoji}</span>
+                                          <span className="dm-reaction-count">{count}</span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {/* Hover Action Bar */}
+                                <div className="dm-msg-hover-toolbar">
+                                  <button
+                                    type="button"
+                                    className="dm-toolbar-btn"
+                                    onClick={() => setDmReplyingTo(m)}
+                                    title="Reply"
+                                    aria-label="Reply to message"
+                                  >
+                                    ↩️
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="dm-toolbar-btn"
+                                    onClick={() => handleToggleDmReaction(m.id, '👍')}
+                                    title="Thumbs up"
+                                    aria-label="React thumbs up"
+                                  >
+                                    👍
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="dm-toolbar-btn"
+                                    onClick={() => handleToggleDmReaction(m.id, '❤️')}
+                                    title="Heart"
+                                    aria-label="React heart"
+                                  >
+                                    ❤️
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="dm-toolbar-btn"
+                                    onClick={() => handleToggleDmReaction(m.id, '🔥')}
+                                    title="Fire"
+                                    aria-label="React fire"
+                                  >
+                                    🔥
+                                  </button>
+                                  {isOwn && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="dm-toolbar-btn"
+                                        onClick={() => handleStartEditDmMessage(m)}
+                                        title="Edit message"
+                                        aria-label="Edit message"
+                                      >
+                                        ✏️
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="dm-toolbar-btn danger"
+                                        onClick={() => handleDeleteDmMessage(m.id)}
+                                        title="Delete message"
+                                        aria-label="Delete message"
+                                      >
+                                        🗑️
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Reply Preview Banner */}
+                    {dmReplyingTo && (
+                      <div className="dm-reply-preview-bar">
+                        <div className="dm-reply-preview-content">
+                          <span className="reply-preview-icon">↩️</span>
+                          <span>
+                            Replying to <strong>@{dmReplyingTo.senderName}</strong>: "{dmReplyingTo.content.slice(0, 60)}{dmReplyingTo.content.length > 60 ? '...' : ''}"
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-close-reply"
+                          onClick={() => setDmReplyingTo(null)}
+                          aria-label="Cancel reply"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Attachment Preview Banner */}
+                    {dmAttachedFile && (
+                      <div className="dm-file-preview-bar">
+                        <div className="dm-file-preview-content">
+                          <span className="file-preview-icon">📎</span>
+                          <span className="file-preview-name">{dmAttachedFile.name} ({Math.round(dmAttachedFile.size / 1024)} KB)</span>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-close-file-preview"
+                          onClick={() => setDmAttachedFile(null)}
+                          aria-label="Remove attachment"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )}
+
+                    {/* DM Input Form */}
+                    <form className="dm-input-form" onSubmit={handleSendDm}>
+                      <label className="btn-dm-attach-file" title="Attach a file">
+                        <input
+                          type="file"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            if (e.target.files && e.target.files[0]) {
+                              setDmAttachedFile(e.target.files[0]);
+                            }
+                          }}
+                        />
+                        📎
+                      </label>
+                      <input
+                        type="text"
+                        placeholder={`Message ${activeDm.name}... (type @ to mention)`}
+                        value={dmInputText}
+                        onChange={(e) => setDmInputText(e.target.value)}
+                      />
+                      <button type="submit" disabled={!dmInputText.trim() && !dmAttachedFile}>
+                        Send ✈
+                      </button>
+                    </form>
+                  </>
+                ) : (
+                  <div className="dm-no-active-conversation">
+                    <span className="empty-icon">💬</span>
+                    <h4>Select a conversation</h4>
+                    <p>Choose an existing thread from the left or start a new direct message or group conversation.</p>
                   </div>
-                </div>
-
-                {/* DM Messages Feed */}
-                <div className="dm-messages-feed">
-                  {activeDm.messages.map(m => (
-                    <div
-                      key={m.id}
-                      className={`dm-message-row ${m.senderId === currentUser.id ? 'sent' : 'received'}`}
-                    >
-                      <div className="dm-bubble">
-                        <div className="dm-sender-tag">{m.senderName} • {m.timestamp}</div>
-                        <div className="dm-content-text">{m.content}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* DM Input Form */}
-                <form className="dm-input-form" onSubmit={handleSendDm}>
-                  <input
-                    type="text"
-                    placeholder={`Message ${activeDm.name}...`}
-                    value={dmInputText}
-                    onChange={(e) => setDmInputText(e.target.value)}
-                  />
-                  <button type="submit" disabled={!dmInputText.trim()}>
-                    Send ✈
-                  </button>
-                </form>
+                )}
               </div>
             </div>
           )}
@@ -1480,22 +2874,142 @@ const Dashboard = ({ onFormSwitch }) => {
 
               {/* Flagged Items Review Queue */}
               <div className="mod-queue-section">
-                <h3>Flagged Messages Queue ({moderationItems.length})</h3>
-                {moderationItems.length === 0 ? (
+                <div className="mod-queue-header-row">
+                  <h3>Flagged Messages Queue ({filteredModerationItems.length})</h3>
+                  <div className="mod-search-input-wrap">
+                    <span className="mod-search-icon" aria-hidden="true">🔍</span>
+                    <input
+                      type="text"
+                      placeholder="Filter by keyword, user, or channel..."
+                      value={modSearchQuery}
+                      onChange={(e) => setModSearchQuery(e.target.value)}
+                      aria-label="Filter moderation queue"
+                    />
+                    {modSearchQuery && (
+                      <button
+                        type="button"
+                        className="mod-search-clear"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setModSearchQuery('');
+                        }}
+                        aria-label="Clear filter"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mod-filters-bar" role="group" aria-label="Moderation queue filters">
+                  <button
+                    type="button"
+                    className={`mod-filter-tab ${modFilterTab === 'all' ? 'active' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModFilterTab('all');
+                    }}
+                    aria-pressed={modFilterTab === 'all'}
+                  >
+                    <span>All Items</span>
+                    <span className="mod-filter-badge">{modFilterCounts.all}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`mod-filter-tab ${modFilterTab === 'high' ? 'active high' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModFilterTab(prev => (prev === 'high' ? 'all' : 'high'));
+                    }}
+                    aria-pressed={modFilterTab === 'high'}
+                  >
+                    <span>🔴 High Severity</span>
+                    <span className="mod-filter-badge">{modFilterCounts.high}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`mod-filter-tab ${modFilterTab === 'medium' ? 'active medium' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModFilterTab(prev => (prev === 'medium' ? 'all' : 'medium'));
+                    }}
+                    aria-pressed={modFilterTab === 'medium'}
+                  >
+                    <span>🟡 Medium Severity</span>
+                    <span className="mod-filter-badge">{modFilterCounts.medium}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`mod-filter-tab ${modFilterTab === 'spam' ? 'active spam' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModFilterTab(prev => (prev === 'spam' ? 'all' : 'spam'));
+                    }}
+                    aria-pressed={modFilterTab === 'spam'}
+                  >
+                    <span>🚫 Spam & Phishing</span>
+                    <span className="mod-filter-badge">{modFilterCounts.spam}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`mod-filter-tab ${modFilterTab === 'harassment' ? 'active harassment' : ''}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setModFilterTab(prev => (prev === 'harassment' ? 'all' : 'harassment'));
+                    }}
+                    aria-pressed={modFilterTab === 'harassment'}
+                  >
+                    <span>⚠️ Harassment</span>
+                    <span className="mod-filter-badge">{modFilterCounts.harassment}</span>
+                  </button>
+                </div>
+
+                {filteredModerationItems.length === 0 ? (
                   <div className="empty-mod-state">
-                    <span>🎉</span>
-                    <h4>All caught up!</h4>
-                    <p>No flagged messages currently require review. Community is safe and clean.</p>
+                    <span>{modFilterTab !== 'all' || modSearchQuery ? '🔍' : '🎉'}</span>
+                    <h4>
+                      {modFilterTab !== 'all' || modSearchQuery
+                        ? 'No messages match this filter'
+                        : 'All caught up!'}
+                    </h4>
+                    <p>
+                      {modFilterTab !== 'all' || modSearchQuery
+                        ? `No flagged messages match ${
+                            modFilterTab === 'high'
+                              ? 'High Severity'
+                              : modFilterTab === 'medium'
+                              ? 'Medium Severity'
+                              : modFilterTab === 'spam'
+                              ? 'Spam & Phishing'
+                              : modFilterTab === 'harassment'
+                              ? 'Harassment'
+                              : 'the current search query'
+                          }${modSearchQuery ? ` ("${modSearchQuery}")` : ''}.`
+                        : 'No flagged messages currently require review. Community is safe and clean.'}
+                    </p>
+                    {(modFilterTab !== 'all' || modSearchQuery) && (
+                      <button
+                        type="button"
+                        className="btn-mod-reset-filter"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setModFilterTab('all');
+                          setModSearchQuery('');
+                        }}
+                      >
+                        Reset to All Items
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="mod-items-list">
-                    {moderationItems.map(item => (
-                      <div key={item.id} className="mod-card">
+                    {filteredModerationItems.map(item => (
+                      <div key={item.id} className={`mod-card ${item.aiSeverity.toLowerCase()}`}>
                         <div className="mod-card-header">
                           <div className="mod-sender-info">
-                            <span className="mod-user-avatar">👤</span>
+                            <div className="mod-user-avatar-badge">👤</div>
                             <div>
-                              <strong>{item.senderName}</strong> (@{item.senderUsername})
+                              <strong>{item.senderName}</strong> <span className="username-tag">(@{item.senderUsername})</span>
                               <div className="mod-context">{item.communityName} • {item.channelName} • {item.reportedAt}</div>
                             </div>
                           </div>
@@ -1518,28 +3032,40 @@ const Dashboard = ({ onFormSwitch }) => {
                           <button
                             type="button"
                             className="btn-mod approve"
-                            onClick={() => handleModerationAction(item, 'approve')}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleModerationAction(item, 'approve');
+                            }}
                           >
                             ✓ Approve (Safe)
                           </button>
                           <button
                             type="button"
                             className="btn-mod delete"
-                            onClick={() => handleModerationAction(item, 'delete')}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleModerationAction(item, 'delete');
+                            }}
                           >
                             🗑 Delete Message
                           </button>
                           <button
                             type="button"
                             className="btn-mod warn"
-                            onClick={() => handleModerationAction(item, 'warn')}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleModerationAction(item, 'warn');
+                            }}
                           >
                             ⚠️ Warn User
                           </button>
                           <button
                             type="button"
                             className="btn-mod ban"
-                            onClick={() => handleModerationAction(item, 'ban')}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleModerationAction(item, 'ban');
+                            }}
                           >
                             🚫 Ban Member
                           </button>
@@ -1565,15 +3091,25 @@ const Dashboard = ({ onFormSwitch }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {auditLogs.map(log => (
-                        <tr key={log.id}>
-                          <td>{log.timestamp}</td>
-                          <td><strong>{log.moderator}</strong></td>
-                          <td><span className="audit-action-tag">{log.action}</span></td>
-                          <td><code>{log.target}</code></td>
-                          <td>{log.reason}</td>
-                        </tr>
-                      ))}
+                      {auditLogs.map(log => {
+                        const actionLower = log.action.toLowerCase();
+                        const tagClass = actionLower.includes('approve')
+                          ? 'approved'
+                          : actionLower.includes('delete')
+                            ? 'deleted'
+                            : actionLower.includes('warn')
+                              ? 'warned'
+                              : 'banned';
+                        return (
+                          <tr key={log.id}>
+                            <td>{log.timestamp}</td>
+                            <td><strong>{log.moderator}</strong></td>
+                            <td><span className={`audit-action-tag ${tagClass}`}>{log.action}</span></td>
+                            <td><code>{log.target}</code></td>
+                            <td>{log.reason}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1779,57 +3315,548 @@ const Dashboard = ({ onFormSwitch }) => {
       </main>
 
       {/* =========================================================
-          MODALS: Create Community & Join with Code
+          MODALS: 2-Step Create Server, Create Channel, Guidelines, Analytics
           ========================================================= */}
+      {/* 1. CREATE SERVER MODAL (2-Step matching Server.png & Server (1).png) */}
       {isCreateModalOpen && (
-        <div className="modal-backdrop" onClick={() => setIsCreateModalOpen(false)}>
+        <div
+          className="modal-backdrop"
+          onClick={() => { setIsCreateModalOpen(false); setCreateServerStep(1); }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="server-modal-title"
+        >
+          <div className="dashboard-modal-card server-modal-large" onClick={(e) => e.stopPropagation()}>
+            <div className="server-modal-header">
+              <button
+                type="button"
+                className="btn-server-modal-close"
+                onClick={() => { setIsCreateModalOpen(false); setCreateServerStep(1); }}
+                aria-label="Close dialog"
+              >
+                ✕
+              </button>
+
+              <div className="server-step-indicator-wrap">
+                <span className="server-step-badge">
+                  {createServerStep === 1 ? 'Step 1 of 2: Choose Template' : 'Step 2 of 2: Server Details'}
+                </span>
+              </div>
+
+              {createServerStep === 1 ? (
+                <>
+                  <h3 id="server-modal-title" className="server-modal-title">Create Your Server</h3>
+                  <p className="server-modal-subtitle">
+                    Your server is where you and your friends hang out. Make yours and start talking.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h3 id="server-modal-title" className="server-modal-title">Customize Your Server</h3>
+                  <p className="server-modal-subtitle">
+                    Give your community a home of its own with a name and an avatar.
+                  </p>
+                </>
+              )}
+            </div>
+
+            {createServerStep === 1 ? (
+              <div className="server-step1-body">
+                <div className="server-template-list">
+                  {/* Create My Own Card */}
+                  <button
+                    type="button"
+                    className={`server-template-card ${selectedServerTemplate === 'General' ? 'selected' : ''}`}
+                    onClick={() => handleSelectTemplate('General')}
+                  >
+                    <div className="server-template-card-left">
+                      <div className="server-template-icon-wrap" aria-hidden="true">
+                        💻
+                      </div>
+                      <div className="server-template-text">
+                        <span className="server-template-title">Create My Own</span>
+                        <span className="server-template-desc">Start from scratch with a custom blank canvas</span>
+                      </div>
+                    </div>
+                    <span className="server-template-chevron" aria-hidden="true">›</span>
+                  </button>
+
+                  <div className="server-template-category-divider">
+                    <span>START FROM A TEMPLATE</span>
+                  </div>
+
+                  {/* Template Cards */}
+                  {SERVER_TEMPLATES.map((tmpl) => (
+                    <button
+                      key={tmpl.key}
+                      type="button"
+                      className={`server-template-card ${selectedServerTemplate === tmpl.key ? 'selected' : ''}`}
+                      onClick={() => handleSelectTemplate(tmpl.key)}
+                    >
+                      <div className="server-template-card-left">
+                        <div className="server-template-icon-wrap" aria-hidden="true">
+                          {tmpl.icon}
+                        </div>
+                        <div className="server-template-text">
+                          <span className="server-template-title">{tmpl.title}</span>
+                          <span className="server-template-desc">{tmpl.desc}</span>
+                        </div>
+                      </div>
+                      <span className="server-template-chevron" aria-hidden="true">›</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="server-invite-footer-card">
+                  <div className="server-invite-footer-text">Have an invite already?</div>
+                  <button
+                    type="button"
+                    className="btn-server-join-gray"
+                    onClick={() => {
+                      setIsCreateModalOpen(false);
+                      setCreateServerStep(1);
+                      setIsJoinModalOpen(true);
+                    }}
+                  >
+                    Join a Server
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleCreateCommunitySubmit} className="server-step2-form">
+                {/* Active Template Bar */}
+                <div className="server-template-active-bar">
+                  <span className="server-template-active-label">
+                    Selected Template: <strong>{selectedServerTemplate === 'General' ? 'Custom / Create My Own' : selectedServerTemplate}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    className="btn-server-change-template"
+                    onClick={() => setCreateServerStep(1)}
+                  >
+                    Change Template
+                  </button>
+                </div>
+
+                {/* Avatar Preview */}
+                <div className="server-avatar-center-wrap">
+                  <div
+                    className="server-avatar-preview-circle"
+                    title="Selected server avatar"
+                    aria-label={`Current avatar is ${selectedServerAvatar}`}
+                  >
+                    <span className="server-avatar-main-emoji">{selectedServerAvatar}</span>
+                    <span className="server-avatar-plus-badge" title="Preset selected" aria-hidden="true">
+                      +
+                    </span>
+                  </div>
+                  <span className="server-avatar-caption">Selected Server Icon</span>
+                </div>
+
+                {/* Avatar Presets */}
+                <div className="server-avatar-selector-section">
+                  <div className="server-field-header">
+                    <span className="server-field-label">CHOOSE PRESET AVATAR</span>
+                    <span className="server-field-count">12 icons</span>
+                  </div>
+                  <div className="server-avatar-grid-chips" role="radiogroup" aria-label="Server avatars">
+                    {AVATAR_PRESETS.map((item) => {
+                      const isSelected = selectedServerAvatar === item.emoji;
+                      return (
+                        <button
+                          key={item.emoji}
+                          type="button"
+                          className={`server-avatar-chip ${isSelected ? 'selected' : ''}`}
+                          style={{
+                            backgroundColor: item.bg,
+                            borderColor: isSelected ? 'var(--color-ink-black)' : item.border
+                          }}
+                          onClick={() => setSelectedServerAvatar(item.emoji)}
+                          title={`${item.label} (${item.emoji})`}
+                          aria-label={`Select ${item.label} avatar`}
+                          aria-checked={isSelected}
+                          role="radio"
+                        >
+                          <span className="server-avatar-chip-emoji">{item.emoji}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Server Name Field */}
+                <div className="server-field-group">
+                  <label htmlFor="server-name-input" className="server-field-label">
+                    SERVER NAME <span className="server-required-star">*</span>
+                  </label>
+                  <input
+                    id="server-name-input"
+                    type="text"
+                    className="server-name-input-control"
+                    placeholder="Enter server name"
+                    required
+                    maxLength={60}
+                    value={newCommunityForm.name}
+                    onChange={(e) => setNewCommunityForm(prev => ({ ...prev, name: e.target.value }))}
+                    autoFocus
+                  />
+                  {!newCommunityForm.name.trim() && (
+                    <span className="server-field-validation-msg">Server name is required.</span>
+                  )}
+                </div>
+
+                {/* Starter Channels Preview */}
+                <div className="server-starter-channels-box">
+                  <div className="server-starter-channels-header">
+                    <span className="server-starter-channels-label">DEFAULT CHANNELS PREVIEW</span>
+                    <span className="server-starter-channels-count">
+                      {getTemplateDefaultChannels(selectedServerTemplate).length} channels
+                    </span>
+                  </div>
+                  <div className="server-starter-channels-pills">
+                    {getTemplateDefaultChannels(selectedServerTemplate).map((chName) => (
+                      <span key={chName} className="server-channel-pill">
+                        <span className="server-channel-hash">#</span>
+                        <span className="server-channel-name">{chName}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Guidelines Disclaimer */}
+                <p className="server-guidelines-disclaimer">
+                  By creating a server, you agree to Yappy's{' '}
+                  <button
+                    type="button"
+                    className="server-guidelines-link-btn"
+                    onClick={() => setIsGuidelinesModalOpen(true)}
+                  >
+                    Community Guidelines
+                  </button>
+                  .
+                </p>
+
+                {/* Footer Action Buttons */}
+                {createCommunityError && (
+                  <div className="modal-error-banner" style={{ margin: '0.75rem 0' }}>
+                    ⚠️ {createCommunityError}
+                  </div>
+                )}
+                <div className="server-step2-actions">
+                  <button
+                    type="button"
+                    className="btn-server-back"
+                    onClick={() => setCreateServerStep(1)}
+                  >
+                    Back
+                  </button>
+                  <div className="server-step2-actions-right">
+                    <button
+                      type="button"
+                      className="btn-modal-cancel"
+                      onClick={() => { setIsCreateModalOpen(false); setCreateServerStep(1); }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn-server-create-green"
+                      disabled={!newCommunityForm.name.trim() || isCreatingCommunity}
+                    >
+                      {isCreatingCommunity ? 'Creating...' : 'Create'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 2. CREATE TEXT CHANNEL MODAL */}
+      {isCreateChannelModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsCreateChannelModalOpen(false)}>
           <div className="dashboard-modal-card" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>Create a New Community</h3>
-              <button type="button" onClick={() => setIsCreateModalOpen(false)}>×</button>
+              <h3>Create Text Channel</h3>
+              <button type="button" onClick={() => setIsCreateChannelModalOpen(false)}>×</button>
             </div>
-            <form onSubmit={handleCreateCommunitySubmit}>
+            <form onSubmit={handleCreateChannelSubmit}>
+              {createChannelError && (
+                <div className="modal-error-banner">
+                  ⚠️ {createChannelError}
+                </div>
+              )}
               <div className="modal-form-group">
-                <label>Community Name</label>
+                <label>Channel Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. Next.js Builders"
+                  placeholder="e.g. project-discussions"
                   required
-                  value={newCommunityForm.name}
-                  onChange={(e) => setNewCommunityForm({ ...newCommunityForm, name: e.target.value })}
+                  value={newChannelForm.name}
+                  onChange={(e) => setNewChannelForm({ ...newChannelForm, name: e.target.value })}
                 />
               </div>
               <div className="modal-form-group">
-                <label>Category</label>
+                <label>Topic / Description</label>
+                <input
+                  type="text"
+                  placeholder="What is this channel about?"
+                  value={newChannelForm.topic}
+                  onChange={(e) => setNewChannelForm({ ...newChannelForm, topic: e.target.value })}
+                />
+              </div>
+              <div className="modal-form-group">
+                <label>Channel Type</label>
                 <select
-                  value={newCommunityForm.category}
-                  onChange={(e) => setNewCommunityForm({ ...newCommunityForm, category: e.target.value })}
+                  value={newChannelForm.isAnnouncement ? 'announcement' : 'text'}
+                  onChange={(e) =>
+                    setNewChannelForm({
+                      ...newChannelForm,
+                      isAnnouncement: e.target.value === 'announcement',
+                    })
+                  }
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem 0.8rem',
+                    borderRadius: '8px',
+                    border: '1px solid var(--color-soft-border)',
+                    background: 'var(--color-warm-cream)',
+                    fontFamily: 'inherit',
+                  }}
                 >
-                  <option value="Development">Development</option>
-                  <option value="Design">Design</option>
-                  <option value="AI/ML">AI / Machine Learning</option>
-                  <option value="Tech">General Tech</option>
-                  <option value="Education">Education & Study</option>
+                  <option value="text">💬 Text Channel</option>
+                  <option value="announcement">📢 Announcement Channel</option>
                 </select>
               </div>
-              <div className="modal-form-group">
-                <label>Description</label>
-                <textarea
-                  placeholder="What is your community about?"
-                  rows={3}
-                  value={newCommunityForm.description}
-                  onChange={(e) => setNewCommunityForm({ ...newCommunityForm, description: e.target.value })}
-                />
-              </div>
               <div className="modal-actions">
-                <button type="button" className="btn-modal-cancel" onClick={() => setIsCreateModalOpen(false)}>
+                <button type="button" className="btn-modal-cancel" onClick={() => setIsCreateChannelModalOpen(false)}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-modal-submit">
-                  Create Community
+                <button type="submit" className="btn-modal-submit" disabled={!newChannelForm.name.trim() || isCreatingChannel}>
+                  {isCreatingChannel ? 'Creating...' : 'Create Channel'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT CHANNEL MODAL */}
+      {isEditChannelModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsEditChannelModalOpen(false)}>
+          <div className="dashboard-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Edit #{editingChannel?.name}</h3>
+              <button type="button" onClick={() => setIsEditChannelModalOpen(false)}>×</button>
+            </div>
+            <form onSubmit={handleUpdateChannelSubmit}>
+              {updateChannelError && (
+                <div className="modal-error-banner">
+                  ⚠️ {updateChannelError}
+                </div>
+              )}
+              <div className="modal-form-group">
+                <label>Channel Name</label>
+                <input
+                  type="text"
+                  placeholder="e.g. project-discussions"
+                  required
+                  value={editChannelForm.name}
+                  onChange={(e) => setEditChannelForm({ ...editChannelForm, name: e.target.value })}
+                />
+              </div>
+              <div className="modal-form-group">
+                <label>Topic / Description</label>
+                <input
+                  type="text"
+                  placeholder="What is this channel about?"
+                  value={editChannelForm.topic}
+                  onChange={(e) => setEditChannelForm({ ...editChannelForm, topic: e.target.value })}
+                />
+              </div>
+              <div className="modal-form-group">
+                <label>Channel Type</label>
+                <select
+                  value={editChannelForm.type}
+                  onChange={(e) => setEditChannelForm({ ...editChannelForm, type: e.target.value })}
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem 0.8rem',
+                    borderRadius: '8px',
+                    border: '1px solid var(--color-soft-border)',
+                    background: 'var(--color-warm-cream)',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <option value="text">💬 Text Channel</option>
+                  <option value="announcement">📢 Announcement Channel</option>
+                </select>
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="btn-modal-cancel" onClick={() => setIsEditChannelModalOpen(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-modal-submit" disabled={!editChannelForm.name.trim() || isUpdatingChannel}>
+                  {isUpdatingChannel ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CHANNEL MODAL */}
+      {isDeleteChannelModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsDeleteChannelModalOpen(false)}>
+          <div className="dashboard-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 style={{ color: '#E53E3E' }}>Delete Channel #{deletingChannel?.name}</h3>
+              <button type="button" onClick={() => setIsDeleteChannelModalOpen(false)}>×</button>
+            </div>
+            <div style={{ padding: '1rem 0' }}>
+              {deleteChannelError && (
+                <div className="modal-error-banner">
+                  ⚠️ {deleteChannelError}
+                </div>
+              )}
+              <p style={{ fontSize: '0.9rem', color: 'var(--color-ink-black)', marginBottom: '0.5rem' }}>
+                Are you sure you want to delete <strong>#{deletingChannel?.name}</strong>?
+              </p>
+              <p style={{ fontSize: '0.8rem', color: 'var(--color-muted-grey)' }}>
+                This action is permanent and cannot be undone. All messages in this channel will be removed.
+              </p>
+            </div>
+            <div className="modal-actions">
+              <button type="button" className="btn-modal-cancel" onClick={() => setIsDeleteChannelModalOpen(false)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-modal-delete"
+                onClick={handleDeleteChannelConfirm}
+                disabled={isDeletingChannel}
+              >
+                {isDeletingChannel ? 'Deleting...' : 'Delete Channel'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 3. COMMUNITY GUIDELINES & RULES MODAL */}
+      {isGuidelinesModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsGuidelinesModalOpen(false)}>
+          <div className="dashboard-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{activeCommunity?.name} • Guidelines & Rules</h3>
+              <button type="button" onClick={() => setIsGuidelinesModalOpen(false)}>×</button>
+            </div>
+            <div className="guidelines-card-content">
+              {isEditingGuidelines ? (
+                <textarea
+                  rows={8}
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--color-soft-border)', fontSize: '0.8125rem', lineHeight: '1.5' }}
+                  value={communityGuidelines}
+                  onChange={(e) => setCommunityGuidelines(e.target.value)}
+                />
+              ) : (
+                <div>
+                  <div className="guidelines-rule-item">
+                    <strong>1. Be Respectful & Constructive</strong>
+                    Treat all community members with courtesy. Harassment, threats, and hate speech are strictly prohibited.
+                  </div>
+                  <div className="guidelines-rule-item">
+                    <strong>2. Stay On Topic</strong>
+                    Post content and discussions in the appropriate channels to keep the space organized.
+                  </div>
+                  <div className="guidelines-rule-item">
+                    <strong>3. Safe & Legal Content Only</strong>
+                    Do not upload malicious files, pirated content, or unauthorized private information.
+                  </div>
+                  <div className="guidelines-rule-item">
+                    <strong>4. AI Moderation & Human Review</strong>
+                    Messages are analyzed by our AI safety model. Flagged messages are reviewed by community moderators.
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="modal-actions">
+              {canManageMembers ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-modal-cancel"
+                    onClick={() => setIsEditingGuidelines(!isEditingGuidelines)}
+                  >
+                    {isEditingGuidelines ? 'Cancel Edit' : 'Edit Rules'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-modal-submit"
+                    onClick={() => {
+                      setIsEditingGuidelines(false);
+                      setIsGuidelinesModalOpen(false);
+                      triggerToast('Guidelines saved and published to community!');
+                    }}
+                  >
+                    {isEditingGuidelines ? 'Save & Publish' : 'Done'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-modal-submit"
+                  onClick={() => setIsGuidelinesModalOpen(false)}
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 4. SERVER ANALYTICS MODAL */}
+      {isAnalyticsModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsAnalyticsModalOpen(false)}>
+          <div className="dashboard-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{activeCommunity?.name} • Analytics</h3>
+              <button type="button" onClick={() => setIsAnalyticsModalOpen(false)}>×</button>
+            </div>
+            <div className="analytics-stat-grid">
+              <div className="analytics-box">
+                <span className="analytics-box-num">{activeCommunity?.membersCount || 0}</span>
+                <span className="analytics-box-label">Total Members</span>
+              </div>
+              <div className="analytics-box">
+                <span className="analytics-box-num">{activeCommunity?.channels?.length || 0}</span>
+                <span className="analytics-box-label">Active Channels</span>
+              </div>
+              <div className="analytics-box">
+                <span className="analytics-box-num">
+                  {Object.values(channelMessages).reduce((acc, msgs) => acc + (msgs?.length || 0), 0)}
+                </span>
+                <span className="analytics-box-label">Message Volume</span>
+              </div>
+              <div className="analytics-box">
+                <span className="analytics-box-num">{moderationItems.length}</span>
+                <span className="analytics-box-label">Moderation Flags</span>
+              </div>
+            </div>
+            <p style={{ fontSize: '0.8125rem', color: 'var(--color-muted-grey)', margin: '0 0 1rem 0' }}>
+              Real-time community telemetry: message traffic, active member participation, and AI moderation review counts.
+            </p>
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="btn-modal-submit"
+                onClick={() => setIsAnalyticsModalOpen(false)}
+              >
+                Close Analytics
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2018,6 +4045,129 @@ const Dashboard = ({ onFormSwitch }) => {
                 Remove Member
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================
+          NEW CONVERSATION / GROUP CHAT MODAL (PDF-Compliant DM)
+          ========================================================= */}
+      {isNewDmModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsNewDmModalOpen(false)}>
+          <div className="modal-content server-modal-large" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Start a New Conversation</h3>
+              <button
+                type="button"
+                className="btn-close-modal"
+                onClick={() => setIsNewDmModalOpen(false)}
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateConversation}>
+              <div className="modal-body">
+                {newDmError && (
+                  <div className="modal-error-banner" role="alert" style={{ marginBottom: '1rem', padding: '0.65rem 0.85rem', backgroundColor: 'rgba(255, 143, 163, 0.2)', border: '1px solid var(--color-candy-pink)', borderRadius: '6px', fontSize: '0.85rem', color: '#8C142E' }}>
+                    {newDmError}
+                  </div>
+                )}
+
+                <div className="conversation-type-toggle">
+                  <button
+                    type="button"
+                    className={`conv-type-btn ${newDmType === 'direct' ? 'active' : ''}`}
+                    onClick={() => {
+                      setNewDmType('direct');
+                      setNewDmError('');
+                    }}
+                  >
+                    👤 Direct Message (1-on-1)
+                  </button>
+                  <button
+                    type="button"
+                    className={`conv-type-btn ${newDmType === 'group' ? 'active' : ''}`}
+                    onClick={() => {
+                      setNewDmType('group');
+                      setNewDmError('');
+                    }}
+                  >
+                    👥 Group Conversation
+                  </button>
+                </div>
+
+                {newDmType === 'direct' ? (
+                  <div className="form-group" style={{ marginTop: '1.25rem' }}>
+                    <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem', color: 'var(--color-ink-black)' }}>
+                      Recipient Username or Name *
+                    </label>
+                    <input
+                      type="text"
+                      className="modal-text-input"
+                      style={{ width: '100%', padding: '0.65rem 0.85rem', border: '1px solid var(--color-soft-border)', borderRadius: '8px', fontSize: '0.9rem', backgroundColor: 'var(--color-warm-cream)', outline: 'none' }}
+                      placeholder="e.g. alex_r, Priya Sharma, or enter username"
+                      value={newDmRecipient}
+                      onChange={(e) => setNewDmRecipient(e.target.value)}
+                      autoFocus
+                    />
+                    <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-muted-grey)', marginTop: '0.35rem' }}>
+                      Enter the username or name of the person you want to chat with.
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="form-group" style={{ marginTop: '1.25rem' }}>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem', color: 'var(--color-ink-black)' }}>
+                        Group Name *
+                      </label>
+                      <input
+                        type="text"
+                        className="modal-text-input"
+                        style={{ width: '100%', padding: '0.65rem 0.85rem', border: '1px solid var(--color-soft-border)', borderRadius: '8px', fontSize: '0.9rem', backgroundColor: 'var(--color-warm-cream)', outline: 'none' }}
+                        placeholder="e.g. Hackathon Team Alpha, Design Reviewers"
+                        value={newDmGroupName}
+                        onChange={(e) => setNewDmGroupName(e.target.value)}
+                        autoFocus
+                      />
+                    </div>
+                    <div className="form-group" style={{ marginTop: '1rem' }}>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.35rem', color: 'var(--color-ink-black)' }}>
+                        Participants (Comma-separated names or usernames)
+                      </label>
+                      <input
+                        type="text"
+                        className="modal-text-input"
+                        style={{ width: '100%', padding: '0.65rem 0.85rem', border: '1px solid var(--color-soft-border)', borderRadius: '8px', fontSize: '0.9rem', backgroundColor: 'var(--color-warm-cream)', outline: 'none' }}
+                        placeholder="e.g. alex_r, priya_s, David Chen"
+                        value={newDmGroupMembers}
+                        onChange={(e) => setNewDmGroupMembers(e.target.value)}
+                      />
+                      <span style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-muted-grey)', marginTop: '0.35rem' }}>
+                        Separate multiple usernames with commas. You are automatically included as a member.
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="modal-actions" style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                <button
+                  type="button"
+                  className="btn-modal-cancel"
+                  onClick={() => setIsNewDmModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn-modal-submit"
+                >
+                  {newDmType === 'direct' ? 'Open Conversation' : 'Create Group Chat'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
