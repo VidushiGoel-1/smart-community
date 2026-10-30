@@ -21,7 +21,9 @@ const userSchema = new mongoose.Schema(
 
         passwordHash: {
             type: String,
-            required: true,
+            required: function () {
+                return !this.googleId && !this.githubId;
+            },
             select: false
         },
 
@@ -59,7 +61,6 @@ const userSchema = new mongoose.Schema(
             default: 0
         },
 
-        
         refreshTokenHash: {
             type: String,
             select: false
@@ -71,14 +72,31 @@ const userSchema = new mongoose.Schema(
         },
 
         passwordResetTokenHash: {
-        type: String,
-        select: false,
+            type: String,
+            select: false
         },
 
         passwordResetExpiresAt: {
-        type: Date,
-        select: false,
+            type: Date,
+            select: false
         },
+
+        googleId: {
+            type: String,
+            sparse: true,
+            unique: true
+        },
+
+        githubId: {
+            type: String,
+            sparse: true,
+            unique: true
+        },
+
+        authProvider: {
+            type: [String],
+            default: ["local"]
+        }
     },
     {
         timestamps: true
