@@ -70,8 +70,14 @@ const AVATAR_PRESETS = [
 
 // Helper: Map backend community response to dashboard structure
 const mapBackendCommunity = (comm, currentUserId) => {
-  const isOwner = Boolean(currentUserId && String(comm.owner) === String(currentUserId));
-  const isMember = Boolean(comm.isMember || isOwner);
+  const ownerId = comm.owner?._id || comm.owner?.id || comm.owner;
+  const isOwner = Boolean(currentUserId && String(ownerId) === String(currentUserId));
+  const isMember = Boolean(
+    comm.isMember ||
+    isOwner ||
+    (Array.isArray(comm.members) &&
+      comm.members.some((m) => String(m?._id || m?.id || m?.user?._id || m?.user || m) === String(currentUserId)))
+  );
 
   const category = comm.category || 'General';
   let icon = '👥';
@@ -105,16 +111,16 @@ const mapBackendCommunity = (comm, currentUserId) => {
   }
 
   return {
-    id: comm._id,
-    _id: comm._id,
+    id: comm._id || comm.id,
+    _id: comm._id || comm.id,
     name: comm.name,
-    slug: comm.name.toLowerCase().replace(/\s+/g, '-'),
+    slug: comm.slug || (comm.name ? comm.name.toLowerCase().replace(/\s+/g, '-') : 'community'),
     icon: comm.icon || icon,
     iconBg: comm.iconBg || iconBg,
     iconColor: comm.iconColor || iconColor,
     category,
     description: comm.description || '',
-    membersCount: comm.memberCount || 1,
+    membersCount: comm.memberCount || comm.membersCount || (Array.isArray(comm.members) ? comm.members.length : 1),
     userRole: isOwner ? 'Owner' : (isMember ? 'Member' : 'Viewer'),
     isJoined: isMember,
     owner: comm.owner,
@@ -211,8 +217,9 @@ const Dashboard = ({ onFormSwitch }) => {
       id: tokenUid || initialCurrentUser.id,
     };
   });
-  const [communities, setCommunities] = useState(initialCommunities);
-  const [discoverList, setDiscoverList] = useState(initialDiscoverCommunities);
+  const isAuthed = authService.isAuthenticated();
+  const [communities, setCommunities] = useState(() => (isAuthed ? [] : initialCommunities));
+  const [discoverList, setDiscoverList] = useState(() => (isAuthed ? [] : initialDiscoverCommunities));
   const [channelMessages, setChannelMessages] = useState(initialChannelMessages);
   const [directMessages, setDirectMessages] = useState(initialDirectMessages);
   const [moderationItems, setModerationItems] = useState(initialModerationItems);
@@ -220,7 +227,7 @@ const Dashboard = ({ onFormSwitch }) => {
   const [notifications, setNotifications] = useState(initialNotifications);
 
   // Communities Backend Integration State
-  const [communitiesLoading, setCommunitiesLoading] = useState(false);
+  const [communitiesLoading, setCommunitiesLoading] = useState(() => isAuthed);
   const [communitiesError, setCommunitiesError] = useState(null);
   const [isCreatingCommunity, setIsCreatingCommunity] = useState(false);
   const [createCommunityError, setCreateCommunityError] = useState(null);
@@ -242,13 +249,19 @@ const Dashboard = ({ onFormSwitch }) => {
   const [deleteChannelError, setDeleteChannelError] = useState(null);
 
   // Active Contexts
-  const [activeCommunity, setActiveCommunity] = useState(initialCommunities[0]);
-  const [activeChannelId, setActiveChannelId] = useState(initialCommunities[0]?.channels[0]?.id || '');
+  const [activeCommunity, setActiveCommunity] = useState(() => (isAuthed ? null : initialCommunities[0]));
+  const [activeChannelId, setActiveChannelId] = useState(() => (isAuthed ? '' : (initialCommunities[0]?.channels[0]?.id || '')));
   const [activeDmId, setActiveDmId] = useState(initialDirectMessages[0]?.id || '');
   const [showMembersPanel, setShowMembersPanel] = useState(true);
 
   // Fetch Communities from Backend
   const fetchCommunities = useCallback(async () => {
+    if (!authService.isAuthenticated()) {
+      setCommunitiesLoading(false);
+      setCommunitiesError('Please log in to view your communities.');
+      return;
+    }
+
     setCommunitiesLoading(true);
     setCommunitiesError(null);
     try {
@@ -268,12 +281,20 @@ const Dashboard = ({ onFormSwitch }) => {
           const exists = mapped.find((c) => c.id === prev.id || c._id === prev._id);
           return exists || prev;
         });
+      } else {
+        setCommunities([]);
+        setDiscoverList([]);
       }
     } catch (err) {
-      console.warn('Failed to load communities from backend, retaining fallback state:', err);
-      setCommunitiesError(
-        err.friendlyMessage || err.response?.data?.message || 'Could not load communities from backend.'
-      );
+      console.warn('Failed to load communities from backend:', err);
+      if (err.response?.status === 401) {
+        authService.clearSession();
+        setCommunitiesError('Session expired or unauthorized. Please log in again.');
+      } else {
+        setCommunitiesError(
+          err.friendlyMessage || err.response?.data?.message || 'Could not load communities from backend.'
+        );
+      }
     } finally {
       setCommunitiesLoading(false);
     }
@@ -362,6 +383,13 @@ const Dashboard = ({ onFormSwitch }) => {
   const [attachedFile, setAttachedFile] = useState(null);
   const [channelSearchQuery, setChannelSearchQuery] = useState('');
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
+  const [mutedChannels, setMutedChannels] = useState(['ch_j_mod']);
+  const [editingChannelMessageId, setEditingChannelMessageId] = useState(null);
+  const [editingChannelContent, setEditingChannelContent] = useState('');
+  const [channelHistoryLimit, setChannelHistoryLimit] = useState(25);
+  const [dmHistoryLimit, setDmHistoryLimit] = useState(25);
+  const [isPeerTyping, setIsPeerTyping] = useState(false);
+  const [moderationNotice, setModerationNotice] = useState('');
 
   // Global Header Search & Filter
   const [globalSearch, setGlobalSearch] = useState('');
@@ -398,7 +426,8 @@ const Dashboard = ({ onFormSwitch }) => {
     name: '',
     category: 'Development',
     description: '',
-    isPrivate: false
+    isPrivate: false,
+    visibility: 'public'
   });
   const [toastMessage, setToastMessage] = useState('');
 
@@ -562,7 +591,7 @@ const Dashboard = ({ onFormSwitch }) => {
         name: rawName,
         description: newCommunityForm.description.trim() || `${selectedServerTemplate} community created on Yappy.`,
         category: newCommunityForm.category || 'General',
-        visibility: 'public',
+        visibility: newCommunityForm.visibility || 'public',
       });
 
       if (res?.success && res.community) {
@@ -588,7 +617,7 @@ const Dashboard = ({ onFormSwitch }) => {
         setDiscoverList((prev) => [mapped, ...prev]);
         setIsCreateModalOpen(false);
         setCreateServerStep(1);
-        setNewCommunityForm({ name: '', category: 'Development', description: '', isPrivate: false });
+        setNewCommunityForm({ name: '', category: 'Development', description: '', isPrivate: false, visibility: 'public' });
         handleOpenCommunity(mapped);
         triggerToast(`🚀 Server "${mapped.name}" created!`);
       }
@@ -696,6 +725,7 @@ const Dashboard = ({ onFormSwitch }) => {
       name: channel.name,
       topic: channel.description || channel.topic || '',
       type: channel.type || (channel.isAnnouncement ? 'announcement' : 'text'),
+      isPrivate: Boolean(channel.isPrivate),
     });
     setUpdateChannelError(null);
     setIsEditChannelModalOpen(true);
@@ -727,6 +757,7 @@ const Dashboard = ({ onFormSwitch }) => {
 
         if (res?.success && res.channel) {
           const updated = mapBackendChannel(res.channel);
+          updated.isPrivate = Boolean(editChannelForm.isPrivate);
           const updatedChannels = (activeCommunity?.channels || []).map((ch) =>
             ch.id === channelId || ch._id === channelId ? updated : ch
           );
@@ -751,7 +782,14 @@ const Dashboard = ({ onFormSwitch }) => {
       // Mock fallback
       const updatedChannels = (activeCommunity?.channels || []).map((ch) =>
         ch.id === channelId
-          ? { ...ch, name: cleanName, topic: editChannelForm.topic.trim(), isAnnouncement: editChannelForm.type === 'announcement' }
+          ? {
+              ...ch,
+              name: cleanName,
+              topic: editChannelForm.topic.trim(),
+              type: editChannelForm.type,
+              isAnnouncement: editChannelForm.type === 'announcement',
+              isPrivate: Boolean(editChannelForm.isPrivate)
+            }
           : ch
       );
       setActiveCommunity((prev) => ({ ...prev, channels: updatedChannels }));
@@ -871,6 +909,17 @@ const Dashboard = ({ onFormSwitch }) => {
     setInviteCopied(true);
     triggerToast(`Copied invite code: ${code}`);
     setTimeout(() => setInviteCopied(false), 2500);
+  };
+
+  // Helper: Revoke and regenerate community invite code
+  const handleRevokeInviteCode = () => {
+    const newCode = `${activeCommunity?.slug?.toUpperCase() || 'COMM'}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+    setActiveCommunity(prev => ({
+      ...prev,
+      inviteCode: newCode
+    }));
+    setCommunities(prev => prev.map(c => (c.id === activeCommunity?.id || c._id === activeCommunity?._id) ? { ...c, inviteCode: newCode } : c));
+    triggerToast(`🔄 Revoked previous invite code. New invite code: ${newCode}`);
   };
 
   // Community Member Permissions
@@ -1029,21 +1078,71 @@ const Dashboard = ({ onFormSwitch }) => {
     triggerToast(`Removed ${removedName} (@${removedUsername}) from ${activeCommunity.name}.`);
   };
 
+  // Attachment Validation Helper (10MB limit, allowed extensions whitelist)
+  const validateAndSetAttachment = (file, setFn) => {
+    if (!file) return;
+    const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_SIZE) {
+      triggerToast('⚠️ File size exceeds 10MB limit. Please choose a smaller file.');
+      return;
+    }
+    const disallowed = /\.(exe|bat|sh|cmd|com|msi|vbs|ps1)$/i;
+    if (disallowed.test(file.name)) {
+      triggerToast('⚠️ Security restriction: Executable files (.exe, .sh, etc.) cannot be shared.');
+      return;
+    }
+    setFn(file);
+    triggerToast(`📎 Attached: ${file.name} (${Math.round(file.size / 1024) || 1} KB)`);
+  };
+
   // Channel Messages Handling
   const currentChannelMessages = useMemo(() => {
     const list = channelMessages[activeChannelId] || [];
+    let filtered = list;
     if (showPinnedOnly) {
-      return list.filter(m => m.isPinned);
+      filtered = filtered.filter(m => m.isPinned);
     }
     if (channelSearchQuery.trim()) {
-      return list.filter(m => m.content.toLowerCase().includes(channelSearchQuery.toLowerCase()));
+      const q = channelSearchQuery.toLowerCase();
+      filtered = filtered.filter(m =>
+        m.content.toLowerCase().includes(q) ||
+        (m.senderName && m.senderName.toLowerCase().includes(q))
+      );
     }
-    return list;
-  }, [channelMessages, activeChannelId, showPinnedOnly, channelSearchQuery]);
+    return filtered.slice(-channelHistoryLimit);
+  }, [channelMessages, activeChannelId, showPinnedOnly, channelSearchQuery, channelHistoryLimit]);
 
   const handleSendChannelMessage = (e) => {
     e.preventDefault();
     if (!chatInputText.trim() && !attachedFile) return;
+
+    const contentText = chatInputText.trim();
+
+    // Check for toxic / prohibited words (AI content moderation signal)
+    const toxicRegex = /(crypto\s*pump|cheat-keys|complete\s*idiots|stfu|scam|hate\s*you)/i;
+    const isToxic = toxicRegex.test(contentText);
+
+    if (isToxic) {
+      // Flag message for moderator review
+      const newModItem = {
+        id: generateId('mod'),
+        messageText: contentText,
+        senderName: currentUser.name,
+        senderUsername: currentUser.username,
+        channelName: `#${currentActiveChannel?.name || 'general'}`,
+        communityName: activeCommunity?.name || 'Smart Community',
+        classification: contentText.includes('crypto') ? 'Spam & Phishing' : 'Harassment & Toxicity',
+        confidence: 91,
+        status: 'Pending Review',
+        reportedAt: 'Just now',
+        aiSeverity: 'High'
+      };
+      setModerationItems(prev => [newModItem, ...prev]);
+
+      // Display non-accusatory notice to sender as required by PDF page 4
+      setModerationNotice('Notice: Your recent message was flagged by automated community safety checks and submitted for moderator review.');
+      setTimeout(() => setModerationNotice(''), 6500);
+    }
 
     const newMessage = {
       id: generateId('msg'),
@@ -1052,12 +1151,21 @@ const Dashboard = ({ onFormSwitch }) => {
       senderRole: activeCommunity?.userRole || 'Member',
       avatarText: currentUser.avatarText,
       timestamp: 'Just now',
-      content: chatInputText.trim(),
+      content: contentText,
       reactions: {},
       userReactions: [],
       isPinned: false,
       replyTo: replyingToMessage ? replyingToMessage.id : null,
-      attachments: attachedFile ? [{ name: attachedFile.name, size: `${Math.round(attachedFile.size / 1024)} KB` }] : []
+      replySnippet: replyingToMessage ? { senderName: replyingToMessage.senderName, content: replyingToMessage.content } : null,
+      attachments: attachedFile
+        ? [{
+            name: attachedFile.name,
+            size: `${Math.round(attachedFile.size / 1024) || 1} KB`,
+            isImage: attachedFile.type?.startsWith('image/'),
+            previewUrl: attachedFile.type?.startsWith('image/') ? URL.createObjectURL(attachedFile) : null
+          }]
+        : [],
+      status: 'delivered'
     };
 
     setChannelMessages(prev => ({
@@ -1068,6 +1176,10 @@ const Dashboard = ({ onFormSwitch }) => {
     setChatInputText('');
     setAttachedFile(null);
     setReplyingToMessage(null);
+
+    // Subtle peer typing simulation
+    setIsPeerTyping(true);
+    setTimeout(() => setIsPeerTyping(false), 2000);
   };
 
   const handleToggleReaction = (msgId, emoji) => {
@@ -1081,7 +1193,6 @@ const Dashboard = ({ onFormSwitch }) => {
         const currentReactions = { ...(msg.reactions || {}) };
 
         if (hasReacted) {
-          // Remove user's reaction
           const nextUserReactions = userReactions.filter(e => e !== emoji);
           const currentCount = currentReactions[emoji] || 1;
           const nextCount = Math.max(0, currentCount - 1);
@@ -1096,7 +1207,6 @@ const Dashboard = ({ onFormSwitch }) => {
             userReactions: nextUserReactions
           };
         } else {
-          // Add user's reaction
           const nextUserReactions = [...userReactions, emoji];
           const currentCount = currentReactions[emoji] || 0;
           currentReactions[emoji] = currentCount + 1;
@@ -1119,6 +1229,121 @@ const Dashboard = ({ onFormSwitch }) => {
     triggerToast('Message deleted.');
   };
 
+  // Channel Message Inline Editing
+  const handleStartEditChannelMessage = (msg) => {
+    setEditingChannelMessageId(msg.id);
+    setEditingChannelContent(msg.content);
+  };
+
+  const handleSaveEditChannelMessage = (msgId) => {
+    if (!editingChannelContent.trim()) return;
+    setChannelMessages(prev => {
+      const channelList = prev[activeChannelId] || [];
+      const updated = channelList.map(m => {
+        if (m.id === msgId) {
+          return { ...m, content: editingChannelContent.trim(), isEdited: true };
+        }
+        return m;
+      });
+      return { ...prev, [activeChannelId]: updated };
+    });
+    setEditingChannelMessageId(null);
+    setEditingChannelContent('');
+    triggerToast('Message updated.');
+  };
+
+  // Pin / Unpin Channel Message
+  const handleTogglePinMessage = (msgId) => {
+    setChannelMessages(prev => {
+      const list = prev[activeChannelId] || [];
+      let isNowPinned = false;
+      const updated = list.map(m => {
+        if (m.id === msgId) {
+          isNowPinned = !m.isPinned;
+          return { ...m, isPinned: isNowPinned };
+        }
+        return m;
+      });
+      triggerToast(isNowPinned ? '📌 Message pinned to channel.' : 'Message unpinned.');
+      return { ...prev, [activeChannelId]: updated };
+    });
+  };
+
+  // Toggle Mute Channel
+  const handleToggleMuteChannel = (channelId) => {
+    setMutedChannels(prev => {
+      const isMuted = prev.includes(channelId);
+      const next = isMuted ? prev.filter(id => id !== channelId) : [...prev, channelId];
+      triggerToast(isMuted ? 'Channel unmuted.' : '🔕 Channel muted. Notifications silenced.');
+      return next;
+    });
+  };
+
+  // Report message to moderation queue
+  const handleReportMessage = (msg, contextName) => {
+    const newReport = {
+      id: generateId('mod_rep'),
+      messageText: msg.content,
+      senderName: msg.senderName,
+      senderUsername: msg.senderUsername || (msg.senderName ? msg.senderName.toLowerCase().replace(/\s+/g, '_') : 'user'),
+      channelName: contextName || '#general',
+      communityName: activeCommunity?.name || 'Smart Community',
+      classification: 'User Report (Civility / Policy Review)',
+      confidence: 88,
+      status: 'Pending Review',
+      reportedAt: 'Just now',
+      aiSeverity: 'Medium'
+    };
+    setModerationItems(prev => [newReport, ...prev]);
+
+    const modNotif = {
+      id: generateId('notif'),
+      type: 'moderation',
+      title: 'New Member Report Submitted',
+      description: `Report submitted for message by ${msg.senderName} in ${contextName || '#general'}.`,
+      time: 'Just now',
+      isRead: false
+    };
+    setNotifications(prev => [modNotif, ...prev]);
+    triggerToast('🚩 Message reported to moderators for safety review.');
+  };
+
+  // Block & Unblock User
+  const handleBlockUser = (username) => {
+    if (!username) return;
+    const clean = username.replace(/^@/, '');
+    setCurrentUser(prev => {
+      const prevBlocked = prev.privacySettings?.blockedUsers || [];
+      if (prevBlocked.includes(clean)) return prev;
+      const updated = {
+        ...prev,
+        privacySettings: {
+          ...prev.privacySettings,
+          blockedUsers: [...prevBlocked, clean]
+        }
+      };
+      authService.setUser(updated);
+      return updated;
+    });
+    triggerToast(`🚫 Blocked @${clean}.`);
+  };
+
+  const handleUnblockUser = (username) => {
+    setCurrentUser(prev => {
+      const updated = {
+        ...prev,
+        privacySettings: {
+          ...prev.privacySettings,
+          blockedUsers: (prev.privacySettings?.blockedUsers || []).filter(u => u !== username)
+        }
+      };
+      authService.setUser(updated);
+      return updated;
+    });
+    triggerToast(`Unblocked @${username}.`);
+  };
+
+
   // Direct Messages Handling
   const activeDm = directMessages.find(d => d.id === activeDmId) || directMessages[0];
 
@@ -1135,13 +1360,14 @@ const Dashboard = ({ onFormSwitch }) => {
   // Filter messages within the currently active DM conversation
   const activeDmMessages = useMemo(() => {
     const msgs = activeDm?.messages || [];
-    if (!dmMessageSearchQuery.trim()) return msgs;
-    const q = dmMessageSearchQuery.toLowerCase();
-    return msgs.filter(m =>
-      m.content.toLowerCase().includes(q) ||
-      (m.senderName && m.senderName.toLowerCase().includes(q))
-    );
-  }, [activeDm, dmMessageSearchQuery]);
+    const filtered = !dmMessageSearchQuery.trim()
+      ? msgs
+      : msgs.filter(m =>
+          m.content.toLowerCase().includes(dmMessageSearchQuery.toLowerCase()) ||
+          (m.senderName && m.senderName.toLowerCase().includes(dmMessageSearchQuery.toLowerCase()))
+        );
+    return filtered.slice(-dmHistoryLimit);
+  }, [activeDm, dmMessageSearchQuery, dmHistoryLimit]);
 
   const renderMessageTextWithMentions = (text) => {
     if (!text) return null;
@@ -1384,15 +1610,21 @@ const Dashboard = ({ onFormSwitch }) => {
     }
   };
 
-  // Moderation Actions (Pure ID generation)
+  // Moderation Actions (Approved, Deleted, Warned, Muted, Banned)
   const handleModerationAction = (item, action) => {
     setModerationItems(prev => prev.filter(m => m.id !== item.id));
+
+    let actionName = 'Approved Message';
+    if (action === 'delete') actionName = 'Deleted Message';
+    else if (action === 'warn') actionName = 'Warned User';
+    else if (action === 'mute') actionName = 'Muted User (24h)';
+    else if (action === 'ban') actionName = 'Banned User';
 
     const newLog = {
       id: generateId('log'),
       timestamp: 'Just now',
       moderator: currentUser.name,
-      action: action === 'approve' ? 'Approved Message' : action === 'delete' ? 'Deleted Message' : action === 'warn' ? 'Warned User' : 'Banned User',
+      action: actionName,
       target: `@${item.senderUsername}`,
       reason: `Action on flagged message (${item.classification})`
     };
@@ -1411,8 +1643,30 @@ const Dashboard = ({ onFormSwitch }) => {
 
   // Profile Save
   const handleSaveProfile = (updatedProfile) => {
-    setCurrentUser(prev => ({ ...prev, ...updatedProfile }));
+    setCurrentUser(prev => {
+      const merged = { ...prev, ...updatedProfile };
+      authService.setUser(merged);
+      return merged;
+    });
     triggerToast('✅ Profile settings saved successfully!');
+  };
+
+  const handleStatusChange = (newStatus) => {
+    setCurrentUser(prev => {
+      const merged = { ...prev, status: newStatus };
+      authService.setUser(merged);
+      return merged;
+    });
+    triggerToast(`Status updated to ${newStatus}`);
+  };
+
+  const handleAvatarChange = (newAvatar) => {
+    setCurrentUser(prev => {
+      const merged = { ...prev, avatarText: newAvatar };
+      authService.setUser(merged);
+      return merged;
+    });
+    triggerToast(`Avatar updated!`);
   };
 
   // Active channel helper
@@ -1684,6 +1938,29 @@ const Dashboard = ({ onFormSwitch }) => {
                         <div className="mini-spinner"></div>
                         <span>Loading communities...</span>
                       </div>
+                    ) : communitiesError && communities.length === 0 ? (
+                      <div className="communities-error-state" style={{ gridColumn: '1 / -1', padding: '1.5rem 1rem' }}>
+                        <p style={{ margin: 0, fontSize: '0.9rem' }}>⚠️ {communitiesError}</p>
+                        {communitiesError.toLowerCase().includes('log in') || communitiesError.toLowerCase().includes('unauthorized') || communitiesError.toLowerCase().includes('session') ? (
+                          <button
+                            type="button"
+                            className="btn-retry-action"
+                            style={{ marginTop: '0.75rem' }}
+                            onClick={() => (onFormSwitch ? onFormSwitch('login') : (window.location.hash = 'login'))}
+                          >
+                            Go to Login →
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-retry-action"
+                            style={{ marginTop: '0.75rem' }}
+                            onClick={fetchCommunities}
+                          >
+                            Retry Loading
+                          </button>
+                        )}
+                      </div>
                     ) : communities.length === 0 ? (
                       <div className="communities-empty-state" style={{ gridColumn: '1 / -1', padding: '2rem 1rem' }}>
                         <p>No communities joined yet.</p>
@@ -1885,9 +2162,19 @@ const Dashboard = ({ onFormSwitch }) => {
                 ) : communitiesError && communities.length === 0 ? (
                   <div className="communities-error-state" style={{ gridColumn: '1 / -1' }}>
                     <p>⚠️ {communitiesError}</p>
-                    <button type="button" className="btn-retry-action" onClick={fetchCommunities}>
-                      Retry Loading
-                    </button>
+                    {communitiesError.toLowerCase().includes('log in') || communitiesError.toLowerCase().includes('unauthorized') || communitiesError.toLowerCase().includes('session') ? (
+                      <button
+                        type="button"
+                        className="btn-retry-action"
+                        onClick={() => (onFormSwitch ? onFormSwitch('login') : (window.location.hash = 'login'))}
+                      >
+                        Go to Login →
+                      </button>
+                    ) : (
+                      <button type="button" className="btn-retry-action" onClick={fetchCommunities}>
+                        Retry Loading
+                      </button>
+                    )}
                   </div>
                 ) : communities.length === 0 ? (
                   <div className="communities-empty-state" style={{ gridColumn: '1 / -1' }}>
@@ -1977,9 +2264,19 @@ const Dashboard = ({ onFormSwitch }) => {
                 ) : communitiesError && discoverList.length === 0 ? (
                   <div className="communities-error-state" style={{ gridColumn: '1 / -1' }}>
                     <p>⚠️ {communitiesError}</p>
-                    <button type="button" className="btn-retry-action" onClick={fetchCommunities}>
-                      Retry Loading
-                    </button>
+                    {communitiesError.toLowerCase().includes('log in') || communitiesError.toLowerCase().includes('unauthorized') || communitiesError.toLowerCase().includes('session') ? (
+                      <button
+                        type="button"
+                        className="btn-retry-action"
+                        onClick={() => (onFormSwitch ? onFormSwitch('login') : (window.location.hash = 'login'))}
+                      >
+                        Go to Login →
+                      </button>
+                    ) : (
+                      <button type="button" className="btn-retry-action" onClick={fetchCommunities}>
+                        Retry Loading
+                      </button>
+                    )}
                   </div>
                 ) : discoverList.filter(item => discoverCategory === 'All' || item.category === discoverCategory).length === 0 ? (
                   <div className="communities-empty-state" style={{ gridColumn: '1 / -1' }}>
@@ -2124,6 +2421,9 @@ const Dashboard = ({ onFormSwitch }) => {
                         <span className="channel-hash">{channel.isPrivate ? '🔒' : '#'}</span>
                         <span className="channel-name">{channel.name}</span>
                         {channel.isAnnouncement && <span className="announcement-tag">📢</span>}
+                        {mutedChannels.includes(channel.id) && (
+                          <span className="channel-muted-badge" title="Muted">🔕</span>
+                        )}
                       </button>
                       {isCommunityOwner && (
                         <div className="channel-item-actions">
@@ -2174,9 +2474,24 @@ const Dashboard = ({ onFormSwitch }) => {
                     <span className="chat-header-hash">{currentActiveChannel?.isPrivate ? '🔒' : '#'}</span>
                     <span className="chat-header-title">{currentActiveChannel?.name}</span>
                     <span className="chat-header-topic">{currentActiveChannel?.topic}</span>
+                    {mutedChannels.includes(activeChannelId) && (
+                      <span className="channel-muted-badge" style={{ color: 'var(--color-candy-pink)', marginLeft: '0.5rem', fontWeight: 600 }}>
+                        🔕 Muted
+                      </span>
+                    )}
                   </div>
 
                   <div className="chat-header-actions">
+                    {/* Channel Mute/Unmute toggle */}
+                    <button
+                      type="button"
+                      className={`btn-header-secondary ${mutedChannels.includes(activeChannelId) ? 'muted' : ''}`}
+                      onClick={() => handleToggleMuteChannel(activeChannelId)}
+                      title={mutedChannels.includes(activeChannelId) ? 'Unmute Channel Notifications' : 'Mute Channel Notifications'}
+                    >
+                      {mutedChannels.includes(activeChannelId) ? '🔕 Muted' : '🔔 Mute'}
+                    </button>
+
                     {/* Server Guidelines button */}
                     <button
                       type="button"
@@ -2203,7 +2518,7 @@ const Dashboard = ({ onFormSwitch }) => {
                     <div className="channel-search-box">
                       <input
                         type="text"
-                        placeholder="Search channel..."
+                        placeholder="Search channel or sender..."
                         value={channelSearchQuery}
                         onChange={(e) => setChannelSearchQuery(e.target.value)}
                       />
@@ -2226,6 +2541,27 @@ const Dashboard = ({ onFormSwitch }) => {
 
                 {/* Message History Feed */}
                 <div className="message-history">
+                  {/* Pagination: Load Earlier Messages */}
+                  {(channelMessages[activeChannelId] || []).length > channelHistoryLimit && (
+                    <div className="pagination-bar">
+                      <button
+                        type="button"
+                        className="btn-load-earlier"
+                        onClick={() => setChannelHistoryLimit(prev => prev + 25)}
+                      >
+                        ↑ Load Earlier Messages
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Courtesy Non-Accusatory Sender Moderation Notice */}
+                  {moderationNotice && (
+                    <div className="sender-moderation-notice" role="alert">
+                      <span>🛡️ {moderationNotice}</span>
+                      <button type="button" onClick={() => setModerationNotice('')} aria-label="Dismiss">✕</button>
+                    </div>
+                  )}
+
                   {currentChannelMessages.length === 0 ? (
                     <div className="empty-chat-state">
                       <span className="empty-icon">💬</span>
@@ -2233,97 +2569,170 @@ const Dashboard = ({ onFormSwitch }) => {
                       <p>Be the first to break the ice and start a conversation!</p>
                     </div>
                   ) : (
-                    currentChannelMessages.map(msg => (
-                      <div key={msg.id} className={`chat-message-row ${msg.isPinned ? 'pinned-msg' : ''}`}>
-                        <div className="msg-avatar">
-                          <span>{msg.avatarText}</span>
-                        </div>
-                        <div className="msg-body">
-                          <div className="msg-meta">
-                            <span className="msg-sender">{msg.senderName}</span>
-                            <span className="msg-role-badge">{msg.senderRole}</span>
-                            <span className="msg-time">{msg.timestamp}</span>
-                            {msg.isPinned && <span className="pinned-badge">📌 Pinned</span>}
+                    currentChannelMessages.map(msg => {
+                      const isOwn = msg.senderId === currentUser.id;
+                      const isEditingThis = editingChannelMessageId === msg.id;
+
+                      return (
+                        <div key={msg.id} className={`chat-message-row ${msg.isPinned ? 'pinned-msg' : ''}`}>
+                          <div className="msg-avatar">
+                            <span>{msg.avatarText}</span>
                           </div>
-
-                          {/* Reply quote banner if replying */}
-                          {msg.replyTo && (
-                            <div className="reply-quote-bar">
-                              ↳ Replying to message #{msg.replyTo}
+                          <div className="msg-body">
+                            <div className="msg-meta">
+                              <span className="msg-sender">{msg.senderName}</span>
+                              <span className="msg-role-badge">{msg.senderRole}</span>
+                              <span className="msg-time">{msg.timestamp}</span>
+                              {msg.isPinned && <span className="pinned-badge">📌 Pinned</span>}
+                              {msg.isEdited && <span className="dm-edited-tag">(edited)</span>}
+                              {isOwn && (
+                                <span className="channel-delivery-status" title="Delivered">
+                                  ✓ Delivered
+                                </span>
+                              )}
                             </div>
-                          )}
 
-                          <div className="msg-text">{msg.content}</div>
+                            {/* Reply quote banner if replying */}
+                            {msg.replyTo && (
+                              <div className="reply-quote-bar">
+                                ↳ Replying to message #{msg.replyTo}
+                              </div>
+                            )}
 
-                          {/* Attachments preview */}
-                          {msg.attachments && msg.attachments.length > 0 && (
-                            <div className="attachments-wrapper">
-                              {msg.attachments.map((att, idx) => (
-                                <div key={idx} className="attachment-chip">
-                                  📄 {att.name} <span className="att-size">({att.size})</span>
+                            {isEditingThis ? (
+                              <div className="channel-inline-edit-box">
+                                <input
+                                  type="text"
+                                  className="channel-inline-edit-input"
+                                  value={editingChannelContent}
+                                  onChange={(e) => setEditingChannelContent(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveEditChannelMessage(msg.id);
+                                    if (e.key === 'Escape') setEditingChannelMessageId(null);
+                                  }}
+                                  autoFocus
+                                />
+                                <div className="channel-inline-edit-buttons">
+                                  <button
+                                    type="button"
+                                    className="btn-channel-save-edit"
+                                    onClick={() => handleSaveEditChannelMessage(msg.id)}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-channel-cancel-edit"
+                                    onClick={() => setEditingChannelMessageId(null)}
+                                  >
+                                    Cancel
+                                  </button>
                                 </div>
-                              ))}
-                            </div>
-                          )}
+                              </div>
+                            ) : (
+                              <div className="msg-text">{renderMessageTextWithMentions(msg.content)}</div>
+                            )}
 
-                          {/* Emoji Reactions Bar */}
-                          <div className="reactions-container">
-                            {Object.entries(msg.reactions || {}).map(([emoji, count]) => {
-                              const hasUserReacted = Array.isArray(msg.userReactions) && msg.userReactions.includes(emoji);
-                              return (
-                                <button
-                                  key={emoji}
-                                  type="button"
-                                  className={`reaction-bubble ${hasUserReacted ? 'user-reacted' : ''}`}
-                                  onClick={() => handleToggleReaction(msg.id, emoji)}
-                                  aria-pressed={hasUserReacted}
-                                  title={hasUserReacted ? `Remove ${emoji} reaction` : `React with ${emoji}`}
-                                >
-                                  <span className="reaction-emoji">{emoji}</span>
-                                  <span className="reaction-count">{count}</span>
-                                </button>
-                              );
-                            })}
-                            {/* Quick Add Reaction Buttons */}
-                            <div className="quick-react-buttons">
-                              {['👍', '❤️', '🔥', '🚀', '💡'].map(emoji => {
+                            {/* Attachments preview */}
+                            {msg.attachments && msg.attachments.length > 0 && (
+                              <div className="attachments-wrapper">
+                                {msg.attachments.map((att, idx) => (
+                                  <div key={idx} className="attachment-chip">
+                                    {att.previewUrl ? (
+                                      <img src={att.previewUrl} alt={att.name} className="attachment-img-preview" />
+                                    ) : (
+                                      <span>📄 {att.name} <span className="att-size">({att.size})</span></span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Emoji Reactions Bar */}
+                            <div className="reactions-container">
+                              {Object.entries(msg.reactions || {}).map(([emoji, count]) => {
                                 const hasUserReacted = Array.isArray(msg.userReactions) && msg.userReactions.includes(emoji);
                                 return (
                                   <button
                                     key={emoji}
                                     type="button"
-                                    className={`btn-add-react ${hasUserReacted ? 'user-reacted' : ''}`}
+                                    className={`reaction-bubble ${hasUserReacted ? 'user-reacted' : ''}`}
                                     onClick={() => handleToggleReaction(msg.id, emoji)}
-                                    title={hasUserReacted ? `Remove ${emoji}` : `React with ${emoji}`}
                                     aria-pressed={hasUserReacted}
+                                    title={hasUserReacted ? `Remove ${emoji} reaction` : `React with ${emoji}`}
                                   >
-                                    {emoji}
+                                    <span className="reaction-emoji">{emoji}</span>
+                                    <span className="reaction-count">{count}</span>
                                   </button>
                                 );
                               })}
-                              <button
-                                type="button"
-                                className="btn-reply-action"
-                                onClick={() => setReplyingToMessage(msg)}
-                                title="Reply to message"
-                              >
-                                ↩ Reply
-                              </button>
-                              {msg.senderId === currentUser.id && (
+                              {/* Quick Add Reaction Buttons */}
+                              <div className="quick-react-buttons">
+                                {['👍', '❤️', '🔥', '🚀', '💡'].map(emoji => {
+                                  const hasUserReacted = Array.isArray(msg.userReactions) && msg.userReactions.includes(emoji);
+                                  return (
+                                    <button
+                                      key={emoji}
+                                      type="button"
+                                      className={`btn-add-react ${hasUserReacted ? 'user-reacted' : ''}`}
+                                      onClick={() => handleToggleReaction(msg.id, emoji)}
+                                      title={hasUserReacted ? `Remove ${emoji}` : `React with ${emoji}`}
+                                      aria-pressed={hasUserReacted}
+                                    >
+                                      {emoji}
+                                    </button>
+                                  );
+                                })}
                                 <button
                                   type="button"
-                                  className="btn-delete-action"
-                                  onClick={() => handleDeleteMessage(msg.id)}
-                                  title="Delete your message"
+                                  className="btn-reply-action"
+                                  onClick={() => setReplyingToMessage(msg)}
+                                  title="Reply to message"
                                 >
-                                  🗑
+                                  ↩ Reply
                                 </button>
-                              )}
+                                <button
+                                  type="button"
+                                  className="btn-reply-action"
+                                  onClick={() => handleTogglePinMessage(msg.id)}
+                                  title={msg.isPinned ? "Unpin message" : "Pin message to channel"}
+                                >
+                                  📌 {msg.isPinned ? 'Unpin' : 'Pin'}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn-reply-action"
+                                  onClick={() => handleReportMessage(msg, `#${currentActiveChannel?.name || 'general'}`)}
+                                  title="Report message to moderators"
+                                >
+                                  🚩 Report
+                                </button>
+                                {isOwn && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn-reply-action"
+                                      onClick={() => handleStartEditChannelMessage(msg)}
+                                      title="Edit your message"
+                                    >
+                                      ✏️ Edit
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn-delete-action"
+                                      onClick={() => handleDeleteMessage(msg.id)}
+                                      title="Delete your message"
+                                    >
+                                      🗑
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
@@ -2338,22 +2747,29 @@ const Dashboard = ({ onFormSwitch }) => {
                 {/* File Attachment Preview Bar */}
                 {attachedFile && (
                   <div className="attached-file-banner">
-                    <span>📎 Attached: {attachedFile.name}</span>
+                    <span>📎 Attached: {attachedFile.name} ({Math.round(attachedFile.size / 1024)} KB)</span>
                     <button type="button" onClick={() => setAttachedFile(null)}>×</button>
+                  </div>
+                )}
+
+                {/* Typing Indicator Bar */}
+                {isPeerTyping && (
+                  <div className="typing-indicator-bar">
+                    <div className="typing-dots"><span></span><span></span><span></span></div>
+                    <span className="typing-text">Alex Rivera is typing...</span>
                   </div>
                 )}
 
                 {/* Message Input Footer */}
                 <form className="chat-input-form" onSubmit={handleSendChannelMessage}>
-                  <label className="btn-attachment" title="Attach file or image">
+                  <label className="btn-attachment" title="Attach file or image (max 10MB)">
                     📎
                     <input
                       type="file"
                       style={{ display: 'none' }}
                       onChange={(e) => {
                         if (e.target.files && e.target.files[0]) {
-                          setAttachedFile(e.target.files[0]);
-                          triggerToast(`Attached: ${e.target.files[0].name}`);
+                          validateAndSetAttachment(e.target.files[0], setAttachedFile);
                         }
                       }}
                     />
@@ -2580,6 +2996,17 @@ const Dashboard = ({ onFormSwitch }) => {
 
                     {/* DM Messages Feed */}
                     <div className="dm-messages-feed">
+                      {(activeDm?.messages?.length || 0) > dmHistoryLimit && (
+                        <div style={{ textAlign: 'center', margin: '0.5rem 0' }}>
+                          <button
+                            type="button"
+                            className="btn-load-earlier"
+                            onClick={() => setDmHistoryLimit(prev => prev + 20)}
+                          >
+                            ↑ Load Earlier Messages
+                          </button>
+                        </div>
+                      )}
                       {activeDmMessages.length === 0 ? (
                         <div className="dm-messages-empty">
                           {dmMessageSearchQuery ? (
@@ -2744,7 +3171,16 @@ const Dashboard = ({ onFormSwitch }) => {
                                   >
                                     🔥
                                   </button>
-                                  {isOwn && (
+                                  <button
+                                    type="button"
+                                    className="dm-toolbar-btn"
+                                    onClick={() => handleReportMessage(m, `DM with ${activeDm.name}`)}
+                                    title="Report message to moderators"
+                                    aria-label="Report message"
+                                  >
+                                    🚩
+                                  </button>
+                                  {isOwn ? (
                                     <>
                                       <button
                                         type="button"
@@ -2765,6 +3201,16 @@ const Dashboard = ({ onFormSwitch }) => {
                                         🗑️
                                       </button>
                                     </>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="dm-toolbar-btn danger"
+                                      onClick={() => handleBlockUser(activeDm.username || activeDm.name)}
+                                      title="Block user"
+                                      aria-label="Block user"
+                                    >
+                                      🚫
+                                    </button>
                                   )}
                                 </div>
                               </div>
@@ -2812,15 +3258,23 @@ const Dashboard = ({ onFormSwitch }) => {
                       </div>
                     )}
 
+                    {/* Typing Indicator Bar */}
+                    {isPeerTyping && (
+                      <div className="typing-indicator-bar">
+                        <div className="typing-dots"><span></span><span></span><span></span></div>
+                        <span className="typing-text">{activeDm.name} is typing...</span>
+                      </div>
+                    )}
+
                     {/* DM Input Form */}
                     <form className="dm-input-form" onSubmit={handleSendDm}>
-                      <label className="btn-dm-attach-file" title="Attach a file">
+                      <label className="btn-dm-attach-file" title="Attach a file (max 10MB)">
                         <input
                           type="file"
                           style={{ display: 'none' }}
                           onChange={(e) => {
                             if (e.target.files && e.target.files[0]) {
-                              setDmAttachedFile(e.target.files[0]);
+                              validateAndSetAttachment(e.target.files[0], setDmAttachedFile);
                             }
                           }}
                         />
@@ -2836,6 +3290,7 @@ const Dashboard = ({ onFormSwitch }) => {
                         Send ✈
                       </button>
                     </form>
+
                   </>
                 ) : (
                   <div className="dm-no-active-conversation">
@@ -3061,6 +3516,16 @@ const Dashboard = ({ onFormSwitch }) => {
                           </button>
                           <button
                             type="button"
+                            className="btn-mod mute"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleModerationAction(item, 'mute');
+                            }}
+                          >
+                            ⏸️ Mute User (24h)
+                          </button>
+                          <button
+                            type="button"
                             className="btn-mod ban"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3176,6 +3641,53 @@ const Dashboard = ({ onFormSwitch }) => {
                       handleSaveProfile(currentUser);
                     }}
                   >
+                    <div className="settings-input-group">
+                      <label>Avatar</label>
+                      <div className="profile-avatar-presets" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                        {['🦊', '👩‍💻', '🚀', '🎨', '⚡', '🌟', '🎧', '👾', '🐱', '🐼'].map(emoji => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className={`server-avatar-chip ${currentUser.avatarText === emoji ? 'selected' : ''}`}
+                            onClick={() => handleAvatarChange(emoji)}
+                            style={{
+                              fontSize: '1.25rem',
+                              padding: '0.4rem',
+                              border: currentUser.avatarText === emoji ? '2px solid var(--color-ink-black)' : '1px solid var(--color-soft-border)',
+                              borderRadius: '8px',
+                              background: currentUser.avatarText === emoji ? 'var(--color-lavender)' : 'transparent',
+                              cursor: 'pointer'
+                            }}
+                            title={`Choose ${emoji}`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="settings-input-group">
+                      <label>Online Status</label>
+                      <select
+                        value={currentUser.status || 'Online'}
+                        onChange={(e) => handleStatusChange(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '0.6rem 0.8rem',
+                          borderRadius: '8px',
+                          border: '1px solid var(--color-soft-border)',
+                          background: 'var(--color-warm-cream)',
+                          fontFamily: 'inherit',
+                          marginBottom: '0.5rem'
+                        }}
+                      >
+                        <option value="Online">🟢 Online</option>
+                        <option value="Idle">🟡 Idle</option>
+                        <option value="Do Not Disturb">🔴 Do Not Disturb</option>
+                        <option value="Offline">⚪ Invisible / Offline</option>
+                      </select>
+                    </div>
+
                     <div className="settings-input-group">
                       <label>Full Name</label>
                       <input
@@ -3306,6 +3818,30 @@ const Dashboard = ({ onFormSwitch }) => {
                         })}
                       />
                     </label>
+
+                    <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--color-soft-border)' }}>
+                      <label style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>
+                        Blocked Users ({(currentUser.privacySettings?.blockedUsers || []).length})
+                      </label>
+                      {(currentUser.privacySettings?.blockedUsers || []).length === 0 ? (
+                        <p style={{ fontSize: '0.8rem', color: 'var(--color-muted-grey)' }}>No users blocked.</p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                          {(currentUser.privacySettings?.blockedUsers || []).map(u => (
+                            <div key={u} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0.6rem', background: '#F1F5F9', borderRadius: '6px', fontSize: '0.825rem' }}>
+                              <span>🚫 @{u}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleUnblockUser(u)}
+                                style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600 }}
+                              >
+                                Unblock
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3505,6 +4041,39 @@ const Dashboard = ({ onFormSwitch }) => {
                   )}
                 </div>
 
+                {/* Server Description Field */}
+                <div className="server-field-group">
+                  <label htmlFor="server-desc-input" className="server-field-label">
+                    SERVER DESCRIPTION
+                  </label>
+                  <input
+                    id="server-desc-input"
+                    type="text"
+                    className="server-name-input-control"
+                    placeholder="What is this community about?"
+                    maxLength={160}
+                    value={newCommunityForm.description || ''}
+                    onChange={(e) => setNewCommunityForm(prev => ({ ...prev, description: e.target.value }))}
+                  />
+                </div>
+
+                {/* Server Visibility Field */}
+                <div className="server-field-group">
+                  <label htmlFor="server-visibility-select" className="server-field-label">
+                    COMMUNITY VISIBILITY
+                  </label>
+                  <select
+                    id="server-visibility-select"
+                    className="server-name-input-control"
+                    value={newCommunityForm.visibility || 'public'}
+                    onChange={(e) => setNewCommunityForm(prev => ({ ...prev, visibility: e.target.value }))}
+                    style={{ background: 'var(--color-warm-cream)', cursor: 'pointer' }}
+                  >
+                    <option value="public">🌐 Public (Visible in Discover and accessible to all)</option>
+                    <option value="private">🔒 Private (Invite-code only)</option>
+                  </select>
+                </div>
+
                 {/* Starter Channels Preview */}
                 <div className="server-starter-channels-box">
                   <div className="server-starter-channels-header">
@@ -3629,6 +4198,16 @@ const Dashboard = ({ onFormSwitch }) => {
                   <option value="announcement">📢 Announcement Channel</option>
                 </select>
               </div>
+              <div className="modal-form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.875rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(newChannelForm.isPrivate)}
+                    onChange={(e) => setNewChannelForm({ ...newChannelForm, isPrivate: e.target.checked })}
+                  />
+                  <span>🔒 Private Channel (Only permitted members can access)</span>
+                </label>
+              </div>
               <div className="modal-actions">
                 <button type="button" className="btn-modal-cancel" onClick={() => setIsCreateChannelModalOpen(false)}>
                   Cancel
@@ -3692,6 +4271,16 @@ const Dashboard = ({ onFormSwitch }) => {
                   <option value="text">💬 Text Channel</option>
                   <option value="announcement">📢 Announcement Channel</option>
                 </select>
+              </div>
+              <div className="modal-form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.875rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(editChannelForm.isPrivate)}
+                    onChange={(e) => setEditChannelForm({ ...editChannelForm, isPrivate: e.target.checked })}
+                  />
+                  <span>🔒 Private Channel (Only permitted members can access)</span>
+                </label>
               </div>
               <div className="modal-actions">
                 <button type="button" className="btn-modal-cancel" onClick={() => setIsEditChannelModalOpen(false)}>
@@ -3921,6 +4510,27 @@ const Dashboard = ({ onFormSwitch }) => {
                 >
                   {inviteCopied ? '✓ Copied' : 'Copy'}
                 </button>
+                {canManageMembers && (
+                  <button
+                    type="button"
+                    className="btn-revoke-invite"
+                    onClick={handleRevokeInviteCode}
+                    title="Revoke existing invite and generate a new code"
+                    style={{
+                      background: 'var(--color-pale-card)',
+                      border: '1px solid var(--color-soft-border)',
+                      borderRadius: '6px',
+                      padding: '0.4rem 0.65rem',
+                      cursor: 'pointer',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      color: 'var(--color-ink-black)',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    🔄 Revoke
+                  </button>
+                )}
               </div>
               <p className="modal-invite-hint">Anyone with this code can join {activeCommunity?.name}.</p>
             </div>

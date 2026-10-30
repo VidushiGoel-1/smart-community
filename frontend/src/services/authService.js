@@ -50,6 +50,24 @@ const authService = {
   },
 
   /**
+   * Request password reset link / instructions
+   * @param {{ email: string }} payload
+   */
+  forgotPassword: async ({ email }) => {
+    const response = await api.post(endpoints.FORGOT_PASSWORD, { email });
+    return response.data;
+  },
+
+  /**
+   * Reset password with reset token
+   * @param {{ token: string, newPassword: string }} payload
+   */
+  resetPassword: async ({ token, newPassword }) => {
+    const response = await api.post(endpoints.RESET_PASSWORD, { token, newPassword });
+    return response.data;
+  },
+
+  /**
    * Log out user
    */
   logout: async () => {

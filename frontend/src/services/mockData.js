@@ -21,6 +21,7 @@ export const initialCurrentUser = {
     dmPermission: "Community Members", // 'Everyone' | 'Community Members' | 'Nobody'
     showOnlineStatus: true,
     allowInvites: true,
+    blockedUsers: ["spammer_bot41"]
   }
 };
 

@@ -5,49 +5,136 @@ import topLogo from "../assets/yappy-logo.png";
 import vectorUpper from "../assets/Vector.png";
 import vectorLower from "../assets/Vector (1).png";
 import whiteWave from "../assets/White wave.png";
+import authService from "../services/authService";
 
 const ForgotPasswordPage = (props) => {
+  const [token, setToken] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      return new URLSearchParams(window.location.search).get('token') || '';
+    }
+    return '';
+  });
+  const [mode, setMode] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      return new URLSearchParams(window.location.search).get('token') ? 'reset' : 'request';
+    }
+    return 'request';
+  }); // 'request' | 'reset'
   const [email, setEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null);
-  const [fieldError, setFieldError] = useState('');
+  const [errors, setErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleRequestSubmit = async (e) => {
     e.preventDefault();
     if (isSubmitting) return;
-    setFieldError('');
+    setErrors({});
+    setStatusMessage(null);
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!email.trim()) {
-      setFieldError('Please enter your email address');
+      setErrors({ email: 'Please enter your email address' });
       return;
     }
     if (!emailRegex.test(email.trim())) {
-      setFieldError('Please enter a valid email address');
+      setErrors({ email: 'Please enter a valid email address' });
       return;
     }
 
     setIsSubmitting(true);
 
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    try {
+      const response = await authService.forgotPassword({ email: email.trim() });
+      setStatusMessage({
+        type: 'success',
+        title: 'Recovery Email Sent',
+        body: response?.message || 'If an account exists with this email, a password reset link will be sent.'
+      });
+    } catch (err) {
+      const isNetworkError = Boolean(err.isNetworkOrCors || err.code === 'ERR_NETWORK' || !err.response);
+      const errMsg =
+        isNetworkError
+          ? 'Network Error. Please check your internet connection.'
+          : err.friendlyMessage ||
+            err.response?.data?.message ||
+            err.message ||
+            'Unable to process password reset request.';
       setStatusMessage({
         type: 'error',
-        title: 'Network Error',
-        body: 'Network Error'
+        title: 'Request Failed',
+        body: errMsg
       });
+    } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleResetSubmit = async (e) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+    setErrors({});
+    setStatusMessage(null);
+
+    const newErrors = {};
+    if (!token.trim()) {
+      newErrors.token = 'Reset token is required';
+    }
+    if (!newPassword) {
+      newErrors.newPassword = 'New password is required';
+    } else if (newPassword.length < 12) {
+      newErrors.newPassword = 'Password must be at least 12 characters long';
+    }
+    if (!confirmPassword) {
+      newErrors.confirmPassword = 'Confirm your new password';
+    } else if (newPassword !== confirmPassword) {
+      newErrors.confirmPassword = 'Passwords do not match';
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
       return;
     }
 
-    // Provide immediate responsive feedback without inventing backend success
-    setTimeout(() => {
-      setStatusMessage({
-        type: 'info',
-        title: 'Backend Endpoint Pending',
-        body: `A password reset endpoint has not yet been deployed to the backend API for ${email.trim()}. Please contact your community administrator or support at support@smartcommunity.org for account recovery assistance.`
+    setIsSubmitting(true);
+
+    try {
+      const response = await authService.resetPassword({
+        token: token.trim(),
+        newPassword
       });
+
+      setStatusMessage({
+        type: 'success',
+        title: 'Password Reset Successful',
+        body: response?.message || 'Your password has been securely reset. Redirecting to login...'
+      });
+
+      setTimeout(() => {
+        if (props.onFormSwitch) {
+          props.onFormSwitch('login', { email: email.trim() });
+        }
+      }, 1500);
+    } catch (err) {
+      const isNetworkError = Boolean(err.isNetworkOrCors || err.code === 'ERR_NETWORK' || !err.response);
+      const errMsg =
+        isNetworkError
+          ? 'Network Error. Please check your internet connection.'
+          : err.friendlyMessage ||
+            err.response?.data?.message ||
+            err.message ||
+            'Failed to reset password. The link or token may be invalid or expired.';
+      setStatusMessage({
+        type: 'error',
+        title: 'Reset Failed',
+        body: errMsg
+      });
+    } finally {
       setIsSubmitting(false);
-    }, 350);
+    }
   };
 
   const handleSocialLogin = (provider) => {
@@ -78,43 +165,168 @@ const ForgotPasswordPage = (props) => {
         {/* Centered White Card */}
         <div className="forgot-card">
           <div className="header-section">
-            <h1>Forgot Password?</h1>
-            <p>Enter your email address to receive recovery instructions.</p>
+            <h1>{mode === 'request' ? 'Forgot Password?' : 'Set New Password'}</h1>
+            <p>
+              {mode === 'request'
+                ? 'Enter your email address to receive recovery instructions.'
+                : 'Enter your reset token and choose a new secure password.'}
+            </p>
           </div>
 
           {statusMessage && (
             <div className={`status-banner ${statusMessage.type}`} role="status">
-              <div className="status-banner-title">⚠️ {statusMessage.title}</div>
+              <div className="status-banner-title">
+                {statusMessage.type === 'success' ? '✓ ' : '⚠️ '}
+                {statusMessage.title}
+              </div>
               <p className="status-banner-body">{statusMessage.body}</p>
             </div>
           )}
 
-          <form className="forgot-form" onSubmit={handleSubmit} noValidate>
-            <div className="input-group">
-              <label htmlFor="forgot-email">Email Address</label>
-              <div className="input-wrapper">
-                <input
-                  id="forgot-email"
-                  type="email"
-                  placeholder="Enter your email address"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (fieldError) setFieldError('');
-                  }}
-                  className={fieldError ? 'input-error' : ''}
-                  required
-                  autoComplete="email"
-                  disabled={isSubmitting}
-                />
+          {mode === 'request' ? (
+            <form className="forgot-form" onSubmit={handleRequestSubmit} noValidate>
+              <div className="input-group">
+                <label htmlFor="forgot-email">Email Address</label>
+                <div className="input-wrapper">
+                  <input
+                    id="forgot-email"
+                    type="email"
+                    placeholder="Enter your email address"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (errors.email) setErrors((prev) => ({ ...prev, email: '' }));
+                    }}
+                    className={errors.email ? 'input-error' : ''}
+                    required
+                    autoComplete="email"
+                    disabled={isSubmitting}
+                  />
+                </div>
+                {errors.email && <span className="field-error">{errors.email}</span>}
               </div>
-              {fieldError && <span className="field-error">{fieldError}</span>}
-            </div>
 
-            <button type="submit" className="btn-primary" disabled={isSubmitting}>
-              {isSubmitting ? "Checking..." : "Reset Password \u2192"}
-            </button>
-          </form>
+              <button type="submit" className="btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? "Sending..." : "Send Reset Link \u2192"}
+              </button>
+
+              <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: '#6434df', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 700 }}
+                  onClick={() => {
+                    if (props.onFormSwitch) {
+                      props.onFormSwitch('resetPassword');
+                    } else {
+                      setMode('reset');
+                      setStatusMessage(null);
+                      setErrors({});
+                    }
+                  }}
+                >
+                  Have a reset token? Enter it here &rarr;
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form className="forgot-form" onSubmit={handleResetSubmit} noValidate>
+              <div className="input-group">
+                <label htmlFor="reset-token">Reset Token</label>
+                <div className="input-wrapper">
+                  <input
+                    id="reset-token"
+                    type="text"
+                    placeholder="Enter reset token from email"
+                    value={token}
+                    onChange={(e) => {
+                      setToken(e.target.value);
+                      if (errors.token) setErrors((prev) => ({ ...prev, token: '' }));
+                    }}
+                    className={errors.token ? 'input-error' : ''}
+                    required
+                    disabled={isSubmitting}
+                  />
+                </div>
+                {errors.token && <span className="field-error">{errors.token}</span>}
+              </div>
+
+              <div className="input-group">
+                <label htmlFor="reset-new-password">New Password (min. 12 characters)</label>
+                <div className="input-wrapper password-wrapper">
+                  <input
+                    id="reset-new-password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Enter at least 12 characters"
+                    value={newPassword}
+                    onChange={(e) => {
+                      setNewPassword(e.target.value);
+                      if (errors.newPassword) setErrors((prev) => ({ ...prev, newPassword: '' }));
+                    }}
+                    className={errors.newPassword ? 'input-error' : ''}
+                    required
+                    autoComplete="new-password"
+                    disabled={isSubmitting}
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? "👁️" : "👁️‍🗨️"}
+                  </button>
+                </div>
+                {errors.newPassword && <span className="field-error">{errors.newPassword}</span>}
+              </div>
+
+              <div className="input-group">
+                <label htmlFor="reset-confirm-password">Confirm New Password</label>
+                <div className="input-wrapper password-wrapper">
+                  <input
+                    id="reset-confirm-password"
+                    type={showConfirmPassword ? "text" : "password"}
+                    placeholder="Confirm your new password"
+                    value={confirmPassword}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value);
+                      if (errors.confirmPassword) setErrors((prev) => ({ ...prev, confirmPassword: '' }));
+                    }}
+                    className={errors.confirmPassword ? 'input-error' : ''}
+                    required
+                    autoComplete="new-password"
+                    disabled={isSubmitting}
+                  />
+                  <button
+                    type="button"
+                    className="password-toggle-btn"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                  >
+                    {showConfirmPassword ? "👁️" : "👁️‍🗨️"}
+                  </button>
+                </div>
+                {errors.confirmPassword && <span className="field-error">{errors.confirmPassword}</span>}
+              </div>
+
+              <button type="submit" className="btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? "Resetting Password..." : "Update Password \u2192"}
+              </button>
+
+              <div style={{ textAlign: 'center', marginTop: '1rem' }}>
+                <button
+                  type="button"
+                  style={{ background: 'none', border: 'none', color: '#555555', cursor: 'pointer', fontSize: '0.85rem' }}
+                  onClick={() => {
+                    setMode('request');
+                    setStatusMessage(null);
+                    setErrors({});
+                  }}
+                >
+                  &larr; Back to request reset link
+                </button>
+              </div>
+            </form>
+          )}
 
           <div className="divider">
             <span>Or continue with</span>

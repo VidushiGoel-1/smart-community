@@ -4,6 +4,7 @@
   box-sizing: border-box;
 }
 
+/* Page wrapper — Warm Playful Ground */
 .verify-wrapper {
   min-height: 100vh;
   width: 100%;
@@ -11,12 +12,13 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background-color: #101010;
+  background-color: var(--dp-color-ground);
   position: relative;
   overflow-x: hidden;
   padding: 4.5rem 1rem 2.5rem 1rem;
   box-sizing: border-box;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--dp-font-body);
+  color: var(--dp-color-ink);
 }
 
 @media (min-width: 1024px) and (min-height: 650px) {
@@ -36,11 +38,12 @@
   z-index: 20;
   cursor: pointer;
   user-select: none;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .verify-wrapper .top-logo:hover {
   opacity: 0.9;
+  transform: scale(1.02);
 }
 
 .verify-wrapper .top-logo img {
@@ -51,15 +54,16 @@
   display: block;
 }
 
-/* Centered Card */
+/* Centered Geometric Card */
 .verify-card {
   width: 100%;
-  max-width: 440px;
-  background: #ffffff;
-  border-radius: 12px;
+  max-width: 450px;
+  background: var(--dp-color-panel);
+  border: 2px solid var(--dp-color-outline);
+  border-radius: var(--dp-radius-card);
+  box-shadow: var(--dp-shadow-firm-lg);
   position: relative;
   z-index: 10;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
   padding: 2.25rem 2.25rem 2rem 2.25rem;
   margin: 0;
   box-sizing: border-box;
@@ -72,61 +76,66 @@
 }
 
 .verify-header h1 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #111111;
+  font-family: var(--dp-font-display);
+  font-size: 1.65rem;
+  font-weight: 800;
+  color: var(--dp-color-ink);
   margin-bottom: 0.5rem;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
 }
 
 .verify-header p {
+  font-family: var(--dp-font-body);
   font-size: 0.875rem;
-  color: #4b5563;
+  color: var(--text-secondary);
   line-height: 1.5;
   margin: 0;
 }
 
 .verify-target-email {
-  color: #111111;
+  color: var(--dp-color-accent);
+  font-weight: 700;
   word-break: break-all;
 }
 
 /* Alerts */
 .verify-alert {
   padding: 0.75rem 0.9rem;
-  border-radius: 6px;
+  border-radius: var(--dp-radius-input);
   font-size: 0.8125rem;
   line-height: 1.4;
   margin-bottom: 1.25rem;
   text-align: left;
+  box-shadow: var(--dp-shadow-firm-sm);
 }
 
 .verify-alert.error {
-  background-color: #FFF1F2;
-  border: 1px solid #FF8FA3;
-  color: #BE123C;
+  background-color: #fff0f3;
+  border: 2px solid var(--dp-color-accent-secondary);
+  color: #9f1239;
 }
 
 .verify-alert.success {
-  background-color: #ECFDF5;
-  border: 1px solid #80D8B0;
-  color: #065F46;
+  background-color: var(--dp-color-field-soft);
+  border: 2px solid var(--dp-color-accent-fresh);
+  color: #065f46;
 }
 
 /* Change email inline drawer */
 .change-email-form {
   margin-bottom: 1.25rem;
   text-align: left;
-  background-color: #f9fafb;
-  padding: 0.75rem;
-  border-radius: 8px;
-  border: 1px solid #e5e7eb;
+  background-color: #ffffff;
+  padding: 0.85rem;
+  border-radius: var(--dp-radius-input);
+  border: 2px solid var(--dp-color-outline);
+  box-shadow: var(--dp-shadow-firm-sm);
 }
 
 .change-email-form label {
   font-size: 0.75rem;
-  color: #4b5563;
-  font-weight: 600;
+  color: var(--dp-color-ink);
+  font-weight: 700;
   margin-bottom: 0.4rem;
   display: block;
 }
@@ -140,24 +149,32 @@
   flex: 1;
   height: 38px;
   padding: 0 0.75rem;
-  border: 1px solid #d1d5db;
+  border: 1.5px solid var(--dp-color-outline);
   border-radius: 6px;
   font-size: 0.85rem;
+  font-family: var(--dp-font-body);
 }
 
 .btn-save-email {
   height: 38px;
   padding: 0 1rem;
-  background-color: #101010;
+  background-color: var(--dp-color-accent);
   color: #ffffff;
-  border: none;
+  border: 1.5px solid var(--dp-color-outline);
   border-radius: 6px;
   font-size: 0.8rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
+  box-shadow: 1.5px 1.5px 0 var(--dp-color-outline);
+  transition: transform 0.12s ease;
 }
 
-/* OTP 6-box Group */
+.btn-save-email:hover {
+  background-color: var(--hover-purple);
+  transform: translate(-1px, -1px);
+}
+
+/* OTP 6-box Group — Neo-Geometric Digit Inputs */
 .otp-boxes-group {
   display: flex;
   justify-content: space-between;
@@ -167,32 +184,34 @@
 
 .otp-digit-input {
   width: 52px;
-  height: 56px;
-  font-size: 1.5rem;
-  font-weight: 700;
+  height: 58px;
+  font-family: var(--dp-font-display);
+  font-size: 1.6rem;
+  font-weight: 800;
   text-align: center;
-  background-color: #FAF8F3;
-  border: 1.5px solid #E4E2DE;
-  border-radius: 8px;
-  color: #101010;
+  background-color: #ffffff;
+  border: 2px solid var(--dp-color-outline);
+  border-radius: 10px;
+  color: var(--dp-color-ink);
   outline: none;
-  transition: all 0.15s ease;
+  box-shadow: var(--dp-shadow-firm-sm);
+  transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .otp-digit-input:focus {
-  border-color: #101010;
-  background-color: #ffffff;
-  box-shadow: 0 0 0 3px rgba(183, 148, 246, 0.25);
+  border-color: var(--dp-color-accent);
+  box-shadow: 3px 3px 0 var(--dp-color-accent);
+  transform: translate(-1px, -1px);
 }
 
 .otp-digit-input.filled {
-  border-color: #101010;
-  background-color: #ffffff;
+  border-color: var(--dp-color-outline);
+  background-color: var(--dp-color-selection);
 }
 
 .otp-digit-input.has-error {
-  border-color: #FF8FA3;
-  background-color: #FFF1F2;
+  border-color: var(--dp-color-accent-secondary);
+  background-color: #fff0f3;
 }
 
 /* Resend section */
@@ -202,18 +221,18 @@
 }
 
 .resend-cooldown {
-  color: #6b7280;
+  color: var(--text-secondary);
 }
 
 .resend-cooldown strong {
-  color: #111111;
+  color: var(--dp-color-ink);
 }
 
 .btn-resend-link {
   background: none;
   border: none;
-  color: #b794f6;
-  font-weight: 600;
+  color: var(--dp-color-accent);
+  font-weight: 700;
   font-size: 0.8125rem;
   cursor: pointer;
   text-decoration: underline;
@@ -221,7 +240,7 @@
 }
 
 .btn-resend-link:hover:not(:disabled) {
-  color: #9061F9;
+  color: var(--hover-purple);
 }
 
 .btn-resend-link:disabled {
@@ -229,7 +248,7 @@
   cursor: not-allowed;
 }
 
-/* Actions Row matching Verify.png */
+/* Actions Row */
 .verify-actions {
   display: flex;
   gap: 0.75rem;
@@ -239,51 +258,70 @@
 .btn-change-email {
   flex: 1;
   height: 44px;
-  background-color: #1f2937;
-  color: #ffffff;
-  border: none;
-  border-radius: 6px;
+  background-color: #ffffff;
+  color: var(--dp-color-ink);
+  border: 2px solid var(--dp-color-outline);
+  border-radius: var(--dp-radius-button);
+  box-shadow: var(--dp-shadow-firm-sm);
+  font-family: var(--dp-font-display);
   font-size: 0.9rem;
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.15s ease;
 }
 
 .btn-change-email:hover {
-  background-color: #374151;
+  background-color: var(--dp-color-selection);
+  transform: translate(-1px, -1px);
+  box-shadow: var(--dp-shadow-firm);
+}
+
+.btn-change-email:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--dp-color-outline);
 }
 
 .btn-verify-okay {
   flex: 1;
   height: 44px;
-  background-color: #22c55e;
+  background-color: var(--dp-color-accent);
   color: #ffffff;
-  border: none;
-  border-radius: 6px;
+  border: 2px solid var(--dp-color-outline);
+  border-radius: var(--dp-radius-button);
+  box-shadow: var(--dp-shadow-firm);
+  font-family: var(--dp-font-display);
   font-size: 0.9rem;
   font-weight: 700;
   cursor: pointer;
-  transition: background-color 0.15s ease, opacity 0.15s ease;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.15s ease;
 }
 
 .btn-verify-okay:hover:not(:disabled) {
-  background-color: #16a34a;
+  background-color: var(--hover-purple);
+  transform: translate(-1px, -1px);
+  box-shadow: var(--dp-shadow-firm-md);
+}
+
+.btn-verify-okay:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--dp-color-outline);
 }
 
 .btn-verify-okay:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 /* Back link */
 .back-login-text {
   font-size: 0.8125rem;
-  color: #6b7280;
+  color: var(--dp-color-ink);
   margin: 0;
 }
 
 .back-login-text a {
-  color: #b794f6;
+  color: var(--dp-color-accent);
   font-weight: 700;
   text-decoration: none;
   margin-left: 0.25rem;
@@ -291,6 +329,7 @@
 
 .back-login-text a:hover {
   text-decoration: underline;
+  color: var(--hover-purple);
 }
 
 /* Peeking mascot */
@@ -302,7 +341,7 @@
   height: auto;
   z-index: 2;
   pointer-events: none;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  filter: drop-shadow(2px 2px 0 var(--dp-color-outline));
 }
 
 /* Responsive adjustments */
@@ -310,11 +349,12 @@
   .verify-card {
     max-width: 380px;
     padding: 1.75rem 1.5rem 1.5rem 1.5rem;
+    box-shadow: var(--dp-shadow-firm-md);
   }
 
   .otp-digit-input {
     width: 44px;
-    height: 48px;
+    height: 50px;
     font-size: 1.3rem;
   }
 }

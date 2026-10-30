@@ -1,31 +1,67 @@
 :root {
-  /* Exact Smart Community Design Tokens */
-  --color-ink-black: #101010;
-  --color-warm-cream: #FAF8F3;
-  --color-pure-white: #FFFFFF;
-  --color-soft-border: #E4E2DE;
-  --color-soft-lavender: #B794F6;
-  --color-mint-green: #80D8B0;
-  --color-butter-yellow: #FFD166;
-  --color-candy-pink: #FF8FA3;
-  --color-muted-grey: #777B85;
-  --color-light-lavender: #F0E7FF;
+  /* Playful Geometric Core Color Tokens */
+  --dp-color-ground: #fffdf5;
+  --dp-color-panel: #ffffff;
+  --dp-color-ink: #253044;
+  --dp-color-outline: #252b3a;
+  --dp-color-accent: #6434df;
+  --dp-color-accent-secondary: #ff78c5;
+  --dp-color-accent-warm: #ffd05b;
+  --dp-color-accent-fresh: #9bf1cd;
+  --dp-color-field-soft: #e9fff5;
+  --dp-color-selection: #f1ebff;
+  --dp-color-rule-muted: #b8b6c5;
+
+  /* Typography */
+  --dp-font-display: 'Host Grotesk', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --dp-font-body: 'Instrument Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* Firm Offset Shadows (Tactile Neo-Geometric) */
+  --dp-shadow-firm-xs: 1.5px 1.5px 0 var(--dp-color-outline);
+  --dp-shadow-firm-sm: 2px 2px 0 var(--dp-color-outline);
+  --dp-shadow-firm: 3px 3px 0 var(--dp-color-outline);
+  --dp-shadow-firm-md: 4px 4px 0 var(--dp-color-outline);
+  --dp-shadow-firm-lg: 5px 5px 0 var(--dp-color-outline);
+
+  /* Outlines and Borders */
+  --dp-border-firm: 1.5px solid var(--dp-color-outline);
+  --dp-border-thick: 2px solid var(--dp-color-outline);
+  --dp-border-muted: 1.5px solid var(--dp-color-rule-muted);
+
+  /* Radii */
+  --dp-radius-card: 16px;
+  --dp-radius-modal: 16px;
+  --dp-radius-button: 10px;
+  --dp-radius-input: 8px;
+  --dp-radius-pill: 9999px;
+
+  /* Backward-compatible token mappings for seamless component interop */
+  --color-ink-black: var(--dp-color-ink);
+  --color-warm-cream: var(--dp-color-ground);
+  --color-pure-white: var(--dp-color-panel);
+  --color-soft-border: var(--dp-color-rule-muted);
+  --color-soft-lavender: var(--dp-color-accent);
+  --color-mint-green: var(--dp-color-accent-fresh);
+  --color-butter-yellow: var(--dp-color-accent-warm);
+  --color-candy-pink: var(--dp-color-accent-secondary);
+  --color-muted-grey: #5c667a;
+  --color-light-lavender: var(--dp-color-selection);
 
   /* Semantic Theme Mappings */
-  --bg-main: var(--color-warm-cream);
-  --bg-sidebar: var(--color-ink-black);
-  --bg-card: var(--color-pure-white);
-  --bg-input: var(--color-warm-cream);
-  --border-color: var(--color-soft-border);
-  --border-light: var(--color-soft-border);
-  --border-subtle: var(--color-soft-border);
-  --text-main: var(--color-ink-black);
-  --text-secondary: var(--color-muted-grey);
-  --primary-purple: var(--color-soft-lavender);
-  --hover-purple: var(--color-light-lavender);
-  --status-success: var(--color-mint-green);
-  --status-warning: var(--color-butter-yellow);
-  --status-error: var(--color-candy-pink);
+  --bg-main: var(--dp-color-ground);
+  --bg-sidebar: #1e2433;
+  --bg-card: var(--dp-color-panel);
+  --bg-input: var(--dp-color-panel);
+  --border-color: var(--dp-color-outline);
+  --border-light: var(--dp-color-rule-muted);
+  --border-subtle: #dedbd0;
+  --text-main: var(--dp-color-ink);
+  --text-secondary: #5c667a;
+  --primary-purple: var(--dp-color-accent);
+  --hover-purple: #5025bf;
+  --status-success: var(--dp-color-accent-fresh);
+  --status-warning: var(--dp-color-accent-warm);
+  --status-error: var(--dp-color-accent-secondary);
 }
 
 * {
@@ -35,8 +71,33 @@
 }
 
 body, html {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  color: var(--color-ink-black);
-  background-color: var(--color-warm-cream);
+  font-family: var(--dp-font-body);
+  color: var(--dp-color-ink);
+  background-color: var(--dp-color-ground);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--dp-font-display);
+  color: var(--dp-color-ink);
+  letter-spacing: -0.015em;
+}
+
+/* Accessibility: Visible Focus Indicators */
+:focus-visible {
+  outline: 2.5px solid var(--dp-color-accent);
+  outline-offset: 2px;
+}
+
+/* Respect Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

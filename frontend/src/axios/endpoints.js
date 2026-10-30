@@ -4,6 +4,8 @@ const endpoints = {
   LOGOUT: '/api/auth/logout',
   VERIFY_OTP: '/api/auth/verify-otp',
   RESEND_OTP: '/api/auth/resend-otp',
+  FORGOT_PASSWORD: '/api/auth/forgot-password',
+  RESET_PASSWORD: '/api/auth/reset-password',
 
   // Communities
   COMMUNITIES: '/api/communities',
