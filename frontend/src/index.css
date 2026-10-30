@@ -1,0 +1,42 @@
+:root {
+  /* Exact Smart Community Design Tokens */
+  --color-ink-black: #101010;
+  --color-warm-cream: #FAF8F3;
+  --color-pure-white: #FFFFFF;
+  --color-soft-border: #E4E2DE;
+  --color-soft-lavender: #B794F6;
+  --color-mint-green: #80D8B0;
+  --color-butter-yellow: #FFD166;
+  --color-candy-pink: #FF8FA3;
+  --color-muted-grey: #777B85;
+  --color-light-lavender: #F0E7FF;
+
+  /* Semantic Theme Mappings */
+  --bg-main: var(--color-warm-cream);
+  --bg-sidebar: var(--color-ink-black);
+  --bg-card: var(--color-pure-white);
+  --bg-input: var(--color-warm-cream);
+  --border-color: var(--color-soft-border);
+  --border-light: var(--color-soft-border);
+  --border-subtle: var(--color-soft-border);
+  --text-main: var(--color-ink-black);
+  --text-secondary: var(--color-muted-grey);
+  --primary-purple: var(--color-soft-lavender);
+  --hover-purple: var(--color-light-lavender);
+  --status-success: var(--color-mint-green);
+  --status-warning: var(--color-butter-yellow);
+  --status-error: var(--color-candy-pink);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  color: var(--color-ink-black);
+  background-color: var(--color-warm-cream);
+  -webkit-font-smoothing: antialiased;
+}
