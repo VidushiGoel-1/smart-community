@@ -6,3 +6,7 @@ node_modules/
 venv/
 __pycache__/
 /data/
+data/harmful-contents/
+*.png
+ml_service/data/raw/
+ml_service/data/processed/
